@@ -1,11 +1,6 @@
 {
   "name": "pipeline-service-backend",
   "version": "1.0.0",
-  "description": "Secure API for DevOps Self-Service",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",

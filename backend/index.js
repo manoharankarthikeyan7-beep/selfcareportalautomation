@@ -1,143 +1,37 @@
-import React, { useState, useEffect } from "react"; // Added useEffect
-import { useMsal, AuthenticatedTemplate, UnauthenticatedTemplate } from "@azure/msal-react";
-import { loginRequest } from "./authConfig";
+// A. GET ALL REPOS
+app.get('/api/repos', validateToken, async (req, res) => {
+    try {
+        const response = await axios.get(`https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories?api-version=7.1`, 
+        { headers: { 'Authorization': authHeader } });
+        res.json(response.data.value);
+    } catch (e) { res.status(500).send(e.message); }
+});
 
-function App() {
-    const { instance } = useMsal();
-    const handleLogin = () => {
-        instance.loginPopup(loginRequest).catch(e => console.error(e));
-    };
+// B. GET BRANCHES FOR SELECTED REPO
+app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
+    try {
+        const response = await axios.get(`https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/refs?filter=heads/&api-version=7.1`, 
+        { headers: { 'Authorization': authHeader } });
+        res.json(response.data.value);
+    } catch (e) { res.status(500).send(e.message); }
+});
 
-    return (
-        <div style={{ padding: "20px", fontFamily: "sans-serif" }}>
-            <h1>Azure DevOps Pipeline Generator</h1>
-            <UnauthenticatedTemplate>
-                <p>Please sign in to manage pipelines.</p>
-                <button onClick={handleLogin}>Login with Azure AD</button>
-            </UnauthenticatedTemplate>
-            <AuthenticatedTemplate>
-                <PipelineDashboard />
-            </AuthenticatedTemplate>
-        </div>
-    );
-}
-
-const PipelineDashboard = () => {
-    const { accounts, instance } = useMsal();
-    const [pipelineName, setPipelineName] = useState("");
-    const [selectedRepoId, setSelectedRepoId] = useState(""); // Holds the selected GUID
-    const [repos, setRepos] = useState([]); // List of repos from ADO
-    const [status, setStatus] = useState("");
-
-    const userGroups = accounts[0]?.idTokenClaims?.groups || [];
-    const isAdmin = userGroups.includes("YOUR_ADMIN_GROUP_ID");
-    const isDevOps = userGroups.includes("YOUR_DEVOPS_GROUP_ID");
-
-    // --- Fetch Repositories on Load ---
-    useEffect(() => {
-        const fetchRepos = async () => {
-            try {
-                const authResult = await instance.acquireTokenSilent({
-                    ...loginRequest,
-                    account: accounts[0]
-                });
-
-                const response = await fetch("/api/repos", {
-                    headers: { "Authorization": `Bearer ${authResult.accessToken}` }
-                });
-                const data = await response.json();
-                if (Array.isArray(data)) setRepos(data);
-            } catch (err) {
-                console.error("Failed to load repositories", err);
+// C. THE CREATION ENGINE (Rename + Save)
+app.post('/api/pipelines/create', validateToken, async (req, res) => {
+    const { pipelineName, repoId, branch, yamlPath } = req.body;
+    try {
+        const response = await axios.post(`https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`, {
+            name: pipelineName, // This handles your "Rename" requirement
+            configuration: {
+                type: "yaml",
+                path: yamlPath, // e.g., "/azure-pipelines.yml"
+                repository: {
+                    id: repoId,
+                    type: "azureReposGit",
+                    defaultBranch: branch // e.g., "refs/heads/main"
+                }
             }
-        };
-        fetchRepos();
-    }, [instance, accounts]);
-
-    const handleCreate = async () => {
-        if (!pipelineName || !selectedRepoId) {
-            alert("Please provide a Name and select a Repository");
-            return;
-        }
-
-        setStatus("Creating...");
-
-        try {
-            const authResult = await instance.acquireTokenSilent({
-                ...loginRequest,
-                account: accounts[0]
-            });
-
-            const response = await fetch("/api/pipelines/create", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${authResult.accessToken}`
-                },
-                body: JSON.stringify({
-                    pipelineName: pipelineName,
-                    repoId: selectedRepoId // GUID from the dropdown
-                })
-            });
-
-            const result = await response.json();
-            if (response.ok) {
-                setStatus(`✅ Success! Created ID: ${result.details.id}`);
-                setPipelineName("");
-            } else {
-                setStatus(`❌ Error: ${result.error}`);
-            }
-        } catch (error) {
-            setStatus("❌ Request error.");
-        }
-    };
-
-    return (
-        <div>
-            <h2>Welcome, {accounts[0].name}</h2>
-            <p>Role Detected: <strong>{isAdmin ? "Admin" : isDevOps ? "DevOps" : "Viewer"}</strong></p>
-            <hr />
-
-            {(isAdmin || isDevOps) ? (
-                <div style={{ marginTop: "20px", background: "#f4f4f4", padding: "20px", borderRadius: "8px" }}>
-                    <h3>Create New Pipeline</h3>
-                    
-                    <div style={{ display: "flex", flexDirection: "column", gap: "15px", maxWidth: "400px" }}>
-                        <label><strong>1. Select Repository:</strong></label>
-                        <select 
-                            value={selectedRepoId} 
-                            onChange={(e) => setSelectedRepoId(e.target.value)}
-                            style={{ padding: "10px" }}
-                        >
-                            <option value="">-- Select a Repo --</option>
-                            {repos.map(repo => (
-                                <option key={repo.id} value={repo.id}>{repo.name}</option>
-                            ))}
-                        </select>
-
-                        <label><strong>2. Pipeline Name:</strong></label>
-                        <input 
-                            type="text" 
-                            placeholder="e.g. Finance-App-CI" 
-                            value={pipelineName}
-                            onChange={(e) => setPipelineName(e.target.value)}
-                            style={{ padding: "10px" }}
-                        />
-
-                        <button 
-                            onClick={handleCreate}
-                            style={{ background: "green", color: "white", padding: "12px", border: "none", cursor: "pointer", fontWeight: "bold" }}
-                        >
-                            Trigger Creation
-                        </button>
-                    </div>
-                    {status && <p style={{ marginTop: "15px" }}>{status}</p>}
-                </div>
-            ) : (
-                <p style={{ color: "red" }}>You do not have permission to create pipelines.</p>
-            )}
-        </div>
-    );
-};
-
-export default App;
+        }, { headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' } });
+        res.json(response.data);
+    } catch (e) { res.status(500).json(e.response?.data || e.message); }
+});

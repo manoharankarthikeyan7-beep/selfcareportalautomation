@@ -5,29 +5,61 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  # Reference the Variable Group we created in the Library
   - group: AppSecrets 
+  # ADD THESE:
+  webAppName: 'pipelineapi-hhb5hshxgjgbsbueh'
+  azureServiceConnection: 'Azure subscription 1 (e26f51cc-2002-4eef-9131-5841b18763a7)' 
 
 stages:
 - stage: Build
   jobs:
-  - job: Build_Backend
+  - job: Build_All
     steps:
     - task: NodeTool@0
       inputs:
         versionSpec: '18.x'
+
+    # 1. Build Backend
     - script: |
         cd backend
         npm install
-      displayName: 'Install Backend Dependencies'
+      displayName: 'Install Backend'
 
-  - job: Build_Frontend
-    steps:
-    - task: NodeTool@0
-      inputs:
-        versionSpec: '18.x'
+    # 2. Build Frontend
     - script: |
         cd frontend
         npm install
         npm run build
-      displayName: 'Build React Frontend'
+      displayName: 'Build Frontend'
+
+    # 3. CRITICAL: Move Frontend build into Backend so they deploy together
+    - script: |
+        mkdir -p backend/public
+        cp -r frontend/build/* backend/public/
+      displayName: 'Move Frontend to Backend Public folder'
+
+    # 4. Package everything
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: 'backend'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+
+    - publish: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
+      artifact: drop
+
+- stage: Deploy
+  dependsOn: Build
+  jobs:
+  - deployment: DeployWeb
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              appName: $(webAppName)
+              package: $(Pipeline.Workspace)/drop/$(Build.BuildId).zip

@@ -8,11 +8,13 @@ variables:
   # 1. Reference your Variable Group from Library
   - group: AppSecrets 
   
-  # 2. Define static variables with correct dash syntax
+  # 2. Define static variables with correct list syntax
   - name: webAppName
     value: 'pipelineapi-hhb5hshxgjgbsbueh'
   - name: azureServiceConnection
     value: 'Azure subscription 1 (e26f51cc-2002-4eef-9131-5841b18763a7)' 
+  - name: resourceGroupName
+    value: 'pipelineautomationapi'
 
 stages:
 - stage: Build
@@ -38,7 +40,7 @@ stages:
         npm run build
       displayName: 'Build React Frontend'
 
-    # Move Frontend build into Backend's public folder for single-unit deployment
+    # Move Frontend build into Backend's public folder
     - script: |
         mkdir -p backend/public
         cp -r frontend/build/* backend/public/
@@ -72,10 +74,13 @@ stages:
       artifact: drop
       displayName: 'Download Build Artifacts'
 
-    # Physically upload the zip to your Azure Web App
+    # Deploying with explicit Resource Group and App Type
     - task: AzureWebApp@1
+      displayName: 'Azure Web App Deploy'
       inputs:
         azureSubscription: $(azureServiceConnection)
+        appType: 'webAppLinux'
         appName: $(webAppName)
+        resourceGroupName: $(resourceGroupName)
         package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
-      displayName: 'Azure Web App Deploy'
+        runtimeStack: 'NODE|18-lts'

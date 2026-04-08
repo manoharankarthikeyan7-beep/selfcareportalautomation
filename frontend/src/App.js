@@ -8,14 +8,14 @@ const PipelineWizard = () => {
     const [status, setStatus] = useState("");
     const [repos, setRepos] = useState([]);
     const [branches, setBranches] = useState([]);
+    const [yamlFiles, setYamlFiles] = useState([]); // Store the list of found YAML files
     const [searchTerm, setSearchTerm] = useState("");
     const [yamlContent, setYamlContent] = useState("");
 
     const [formData, setFormData] = useState({ 
-        repoId: '', repoName: '', branch: '', yamlPath: '/azure-pipelines.yml', name: '' 
+        repoId: '', repoName: '', branch: '', yamlPath: '', name: '' 
     });
 
-    // Professional Styles
     const styles = {
         card: { background: "#fff", padding: "30px", borderRadius: "8px", border: "1px solid #ddd", marginTop: "20px" },
         input: { width: "100%", padding: "12px", marginBottom: "15px", boxSizing: "border-box", border: "1px solid #ccc", borderRadius: "4px" },
@@ -45,12 +45,31 @@ const PipelineWizard = () => {
             setBranches(data || []);
             setStatus("");
             setStep(2);
-        } catch (err) { setStatus("Error."); }
+        } catch (err) { setStatus("Error loading branches."); }
+    };
+
+    // NEW: Triggered when user picks a branch - Fetches all .yml files
+    const handleBranchChange = async (branchName) => {
+        setFormData({ ...formData, branch: branchName, yamlPath: '' });
+        if (!branchName) return;
+
+        setStatus("🔍 Searching for YAML files in " + branchName.replace('refs/heads/', '') + "...");
+        try {
+            const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
+            const res = await fetch(`/api/repos/${formData.repoId}/yaml-files?branch=${branchName}`, {
+                headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` }
+            });
+            const data = await res.json();
+            setYamlFiles(data || []);
+            setStatus(data.length > 0 ? "" : "⚠️ No YAML files found in this branch.");
+        } catch (err) {
+            setStatus("❌ Failed to search for YAML files.");
+        }
     };
 
     const fetchYamlPreview = async () => {
-        if (!formData.branch) { alert("Select a branch!"); return; }
-        setStatus("Reading YAML...");
+        if (!formData.yamlPath) { alert("Please select a YAML file first!"); return; }
+        setStatus("Reading YAML content...");
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
             const res = await fetch(`/api/repos/${formData.repoId}/content?path=${formData.yamlPath}&branch=${formData.branch}`, {
@@ -59,9 +78,9 @@ const PipelineWizard = () => {
             const data = await res.json();
             if (data.error) throw new Error();
             setYamlContent(data.content);
-            setStep(3);
+            setStep(3); // Moves to Review Screen
             setStatus("");
-        } catch (err) { setStatus("❌ YAML file not found in this branch."); }
+        } catch (err) { setStatus("❌ Could not read the YAML file."); }
     };
 
     const finalCreateCall = async () => {
@@ -71,7 +90,12 @@ const PipelineWizard = () => {
             const res = await fetch("/api/pipelines/create", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${tokenResponse.accessToken}` },
-                body: JSON.stringify({ pipelineName: formData.name, repoId: formData.repoId, branch: formData.branch, yamlPath: formData.yamlPath })
+                body: JSON.stringify({ 
+                    pipelineName: formData.name, 
+                    repoId: formData.repoId, 
+                    branch: formData.branch, 
+                    yamlPath: formData.yamlPath 
+                })
             });
             if (res.ok) setStatus("✅ Pipeline Created Successfully!");
             else setStatus("❌ Failed to create.");
@@ -102,14 +126,31 @@ const PipelineWizard = () => {
                 <div>
                     <h2>2. Configure</h2>
                     <p>Repository: <b>{formData.repoName}</b></p>
+                    
                     <label>Branch</label>
-                    <select style={styles.input} onChange={(e) => setFormData({...formData, branch: e.target.value})}>
+                    <select style={styles.input} value={formData.branch} onChange={(e) => handleBranchChange(e.target.value)}>
                         <option value="">-- Select Branch --</option>
                         {branches.map(b => <option key={b.name} value={b.name}>{b.name.replace('refs/heads/', '')}</option>)}
                     </select>
-                    <label>YAML Path</label>
-                    <input style={styles.input} value={formData.yamlPath} onChange={(e) => setFormData({...formData, yamlPath: e.target.value})} />
-                    <button onClick={fetchYamlPreview} style={styles.primaryBtn}>Review YAML</button>
+
+                    <label>YAML Path (Found in Repository)</label>
+                    <select 
+                        style={styles.input} 
+                        value={formData.yamlPath} 
+                        onChange={(e) => setFormData({...formData, yamlPath: e.target.value})}
+                        disabled={yamlFiles.length === 0}
+                    >
+                        <option value="">{yamlFiles.length > 0 ? "-- Select a YAML file --" : "Select a branch first"}</option>
+                        {yamlFiles.map(file => <option key={file} value={file}>{file}</option>)}
+                    </select>
+
+                    <button 
+                        onClick={fetchYamlPreview} 
+                        style={{ ...styles.primaryBtn, opacity: formData.yamlPath ? 1 : 0.5 }}
+                        disabled={!formData.yamlPath}
+                    >
+                        Review YAML
+                    </button>
                 </div>
             )}
 
@@ -119,11 +160,13 @@ const PipelineWizard = () => {
                         <h2>3. Review & Run</h2>
                         <button onClick={finalCreateCall} style={{ ...styles.primaryBtn, background: "#107c10" }}>Run</button>
                     </div>
-                    <div style={styles.codeArea}><pre>{yamlContent}</pre></div>
+                    <p style={{ fontSize: "12px", color: "#666" }}>Reviewing: {formData.yamlPath}</p>
+                    <div style={styles.codeArea}><pre style={{ margin: 0 }}>{yamlContent}</pre></div>
                     <div style={{ marginTop: "20px" }}>
                         <label>Pipeline Name</label>
                         <input style={styles.input} placeholder="My-New-Pipeline" onChange={(e) => setFormData({...formData, name: e.target.value})} />
                     </div>
+                    <button onClick={() => setStep(2)} style={{ background: "none", border: "none", color: "#0078d4", cursor: "pointer" }}>← Back to Configure</button>
                 </div>
             )}
         </div>
@@ -136,7 +179,7 @@ function App() {
     <div style={{ padding: "40px", fontFamily: "Segoe UI", maxWidth: "800px", margin: "auto" }}>
       <h1>Pipeline Generator</h1>
       <UnauthenticatedTemplate>
-        <button onClick={() => instance.loginRedirect(loginRequest)} style={ {padding: "10px 20px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Login</button>
+        <button onClick={() => instance.loginRedirect(loginRequest)} style={{ padding: "10px 20px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}>Login</button>
       </UnauthenticatedTemplate>
       <AuthenticatedTemplate><PipelineWizard /></AuthenticatedTemplate>
     </div>

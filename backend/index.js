@@ -45,7 +45,7 @@ const validateToken = (req, res, next) => {
 
 // --- API ROUTES ---
 
-// Step 1: Search Repos
+// Step 1: Get Repositories
 app.get('/api/repos', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -67,26 +67,21 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     } catch (e) { res.status(500).send("Error fetching branches"); }
 });
 
-// NEW Step 3: Get YAML File List (This populates the dropdown you need)
+// Step 3: Discover YAML Files for Dropdown
 app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     const { branch } = req.query;
     const version = branch.replace('refs/heads/', '');
     try {
         const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
         const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
-        
-        // Filter for files ending in .yml or .yaml
         const yamlFiles = response.data.value
             .filter(item => item.path.endsWith('.yml') || item.path.endsWith('.yaml'))
             .map(item => item.path);
-
         res.json(yamlFiles);
-    } catch (e) {
-        res.status(500).json({ error: "Could not fetch YAML files" });
-    }
+    } catch (e) { res.status(500).json({ error: "Could not fetch YAML files" }); }
 });
 
-// Step 4: READ YAML CONTENT (The "Review" logic)
+// Step 4: Get YAML Preview Content
 app.get('/api/repos/:repoId/content', validateToken, async (req, res) => {
     const { path, branch } = req.query;
     const version = branch.replace('refs/heads/', '');
@@ -97,26 +92,37 @@ app.get('/api/repos/:repoId/content', validateToken, async (req, res) => {
     } catch (e) { res.status(404).json({ error: "File not found" }); }
 });
 
-// Step 5: Final Create
+// Step 5: Final Create + Optional Run + Variables
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
-    const { pipelineName, repoId, branch, yamlPath } = req.body;
+    const { pipelineName, repoId, branch, yamlPath, variables, runPipeline } = req.body;
     try {
-        const response = await axios.post(
+        // Create Pipeline Definition
+        const createRes = await axios.post(
             `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`,
             {
                 name: pipelineName,
                 configuration: {
                     type: "yaml", path: yamlPath,
                     repository: { id: repoId, type: "azureReposGit", defaultBranch: branch }
-                }
+                },
+                variables: variables 
             },
             { headers: { 'Authorization': getAdoHeader(), 'Content-Type': 'application/json' } }
         );
-        res.json(response.data);
-    } catch (e) { res.status(500).json(e.response?.data || "Creation failed"); }
+
+        // Run Pipeline if requested
+        if (runPipeline) {
+            const pipelineId = createRes.data.id;
+            await axios.post(
+                `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines/${pipelineId}/runs?api-version=7.0`,
+                { resources: { repositories: { self: { refName: branch } } } },
+                { headers: { 'Authorization': getAdoHeader() } }
+            );
+        }
+        res.json(createRes.data);
+    } catch (e) { res.status(500).json(e.response?.data || "Operation failed"); }
 });
 
-// --- STATIC FILES ---
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

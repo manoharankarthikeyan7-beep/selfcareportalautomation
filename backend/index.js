@@ -10,13 +10,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Helper: Creates the secret handshake for Azure DevOps
 const getAdoHeader = () => {
     const pat = process.env.DEVOPS_PAT;
     return pat ? `Basic ${Buffer.from(`:${pat}`).toString('base64')}` : null;
 };
 
-// --- AUTHENTICATION CONFIGURATION ---
+// --- AUTHENTICATION ---
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`
 });
@@ -28,7 +27,6 @@ function getKey(header, callback) {
   });
 }
 
-// The Security Guard: Checks the user's ID card (JWT Token)
 const validateToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).send('Unauthorized');
@@ -39,31 +37,26 @@ const validateToken = (req, res, next) => {
     algorithms: ['RS256']
   }, (err, decoded) => {
     if (err) return res.status(403).send('Invalid Token');
-    if (decoded.tid !== process.env.AZURE_TENANT_ID) {
-        return res.status(403).send('Unauthorized Tenant');
-    }
+    if (decoded.tid !== process.env.AZURE_TENANT_ID) return res.status(403).send('Unauthorized Tenant');
     req.user = decoded;
     next();
   });
 };
 
-// --- API ROUTES (The Instructions) ---
+// --- API ROUTES ---
 
-// Step 1: Fetch Repositories
+// Step 1: Search Repos
 app.get('/api/repos', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
             `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories?api-version=7.1`,
-            { headers: { 'Authorization': getAdoHeader() }, timeout: 10000 }
+            { headers: { 'Authorization': getAdoHeader() } }
         );
-        const sortedRepos = response.data.value.sort((a, b) => a.name.localeCompare(b.name));
-        res.json(sortedRepos);
-    } catch (e) {
-        res.status(502).json({ error: "ADO Unreachable" });
-    }
+        res.json(response.data.value.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (e) { res.status(502).json({ error: "ADO Unreachable" }); }
 });
 
-// Step 2: Fetch Branches for selected Repo
+// Step 2: Get Branches
 app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -71,12 +64,21 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
             { headers: { 'Authorization': getAdoHeader() } }
         );
         res.json(response.data.value);
-    } catch (e) {
-        res.status(500).send("Error fetching branches");
-    }
+    } catch (e) { res.status(500).send("Error fetching branches"); }
 });
 
-// Step 3: Create & Rename the Pipeline
+// Step 3: READ YAML CONTENT (The "Review" logic)
+app.get('/api/repos/:repoId/content', validateToken, async (req, res) => {
+    const { path, branch } = req.query;
+    const version = branch.replace('refs/heads/', '');
+    try {
+        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?path=${path}&versionDescriptor.version=${version}&$format=text&api-version=7.1`;
+        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
+        res.json({ content: response.data });
+    } catch (e) { res.status(404).json({ error: "File not found" }); }
+});
+
+// Step 4: Final Create
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
     const { pipelineName, repoId, branch, yamlPath } = req.body;
     try {
@@ -85,51 +87,19 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
             {
                 name: pipelineName,
                 configuration: {
-                    type: "yaml",
-                    path: yamlPath,
+                    type: "yaml", path: yamlPath,
                     repository: { id: repoId, type: "azureReposGit", defaultBranch: branch }
                 }
             },
             { headers: { 'Authorization': getAdoHeader(), 'Content-Type': 'application/json' } }
         );
         res.json(response.data);
-    } catch (e) {
-        res.status(500).json(e.response?.data || "Creation failed");
-    }
+    } catch (e) { res.status(500).json(e.response?.data || "Creation failed"); }
 });
 
-// --- SERVE THE WEBSITE (Crucial for fixing 404) ---
-// This tells the server: "If the request isn't for an /api/ route, show the user the website"
+// --- STATIC FILES ---
 app.use(express.static(path.join(__dirname, 'public')));
-
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server online on port ${PORT}`));
-
-// ... (keep your existing imports and validateToken middleware)
-
-// NEW ROUTE: Fetch YAML content for the "Review" step
-app.get('/api/repos/:repoId/content', validateToken, async (req, res) => {
-    const { path, branch } = req.query;
-    // Clean branch name for the API
-    const version = branch.replace('refs/heads/', '');
-    
-    try {
-        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?path=${path}&versionDescriptor.version=${version}&$format=text&api-version=7.1`;
-        
-        const response = await axios.get(url, { 
-            headers: { 'Authorization': getAdoHeader() } 
-        });
-        
-        // Return the raw text of the YAML file
-        res.json({ content: response.data });
-    } catch (e) {
-        console.error("Content Fetch Error:", e.message);
-        res.status(404).json({ error: "YAML file not found. Check the path and branch." });
-    }
-});
-
-// ... (keep your /api/repos, /api/branches, and /api/pipelines/create routes)

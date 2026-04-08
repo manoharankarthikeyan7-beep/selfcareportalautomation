@@ -12,7 +12,6 @@ const PipelineWizard = () => {
     const [searchTerm, setSearchTerm] = useState("");
     const [yamlContent, setYamlContent] = useState("");
     
-    // UI states for Variables and Dropdowns
     const [variables, setVariables] = useState([]); 
     const [showSaveOptions, setShowSaveOptions] = useState(false);
 
@@ -22,31 +21,39 @@ const PipelineWizard = () => {
 
     const styles = {
         card: { background: "#fff", padding: "30px", borderRadius: "8px", border: "1px solid #ddd", marginTop: "20px" },
-        input: { width: "100%", padding: "10px", marginBottom: "10px", border: "1px solid #ccc", borderRadius: "4px", fontSize: "14px", boxSizing: "border-box" },
+        input: { width: "100%", padding: "10px", marginBottom: "15px", border: "1px solid #ccc", borderRadius: "4px", fontSize: "14px", boxSizing: "border-box" },
         primaryBtn: { padding: "10px 20px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" },
-        // YAML Code Preview Box
         codeArea: { background: "#1e1e1e", color: "#d4d4d4", padding: "20px", borderRadius: "4px", fontFamily: "monospace", overflow: "auto", maxHeight: "400px", textAlign: "left", fontSize: "13px", lineHeight: "1.5" },
         varBox: { marginBottom: "20px", padding: "15px", background: "#f8f9fa", border: "1px solid #eee", borderRadius: "4px" },
-        // Split Button Styles
         splitBtnContainer: { display: "flex", position: "relative" },
         runBtn: { padding: "10px 20px", background: "#107c10", color: "white", border: "none", borderRadius: "4px 0 0 4px", cursor: "pointer", fontWeight: "600" },
         arrowBtn: { padding: "10px 12px", background: "#0b5a0b", color: "white", border: "none", borderRadius: "0 4px 4px 0", borderLeft: "1px solid #084a08", cursor: "pointer" },
         dropdownMenu: { position: "absolute", top: "42px", right: 0, background: "white", border: "1px solid #ccc", zIndex: 100, width: "140px", boxShadow: "0 4px 8px rgba(0,0,0,0.1)" },
-        // Vertical List Styles (Fixing the layout issue)
-        repoListContainer: { border: "1px solid #eee", borderRadius: "4px", marginTop: "10px", overflow: "hidden" },
+        
+        // STYLES FOR THE REPO LIST
+        repoListContainer: { 
+            border: "1px solid #eaeaea", 
+            borderRadius: "4px", 
+            marginTop: "10px", 
+            maxHeight: "450px", 
+            overflowY: "auto",
+            backgroundColor: "#fff"
+        },
         repoItem: { 
-            display: "block", 
+            display: "flex", 
+            alignItems: "center",
             width: "100%", 
-            padding: "15px 20px", 
+            padding: "12px 16px", 
             textAlign: "left", 
             cursor: "pointer", 
             border: "none", 
-            background: "white", 
-            borderBottom: "1px solid #eee", 
+            background: "transparent", 
+            borderBottom: "1px solid #f3f2f1", 
             fontSize: "14px",
-            transition: "background 0.2s"
+            color: "#323130",
+            transition: "background 0.1s"
         },
-        backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0, display: "flex", alignItems: "center" }
+        backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0 }
     };
 
     useEffect(() => {
@@ -63,7 +70,7 @@ const PipelineWizard = () => {
 
     const handleRepoSelect = async (repo) => {
         setFormData({ ...formData, repoId: repo.id, repoName: repo.name });
-        setStatus("Loading...");
+        setStatus("Loading configuration...");
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
             const res = await fetch(`/api/repos/${repo.id}/branches`, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
@@ -77,7 +84,7 @@ const PipelineWizard = () => {
     const handleBranchChange = async (branchName) => {
         setFormData({ ...formData, branch: branchName, yamlPath: '' });
         if (!branchName) return;
-        setStatus("Fetching YAML...");
+        setStatus("Fetching YAML files...");
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
             const res = await fetch(`/api/repos/${formData.repoId}/yaml-files?branch=${branchName}`, {
@@ -90,7 +97,7 @@ const PipelineWizard = () => {
     };
 
     const fetchYamlPreview = async () => {
-        setStatus("Loading Preview...");
+        setStatus("Loading YAML...");
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
             const res = await fetch(`/api/repos/${formData.repoId}/content?path=${formData.yamlPath}&branch=${formData.branch}`, {
@@ -105,7 +112,7 @@ const PipelineWizard = () => {
 
     const handleAction = async (shouldRun) => {
         setShowSaveOptions(false);
-        setStatus(shouldRun ? "🚀 Running..." : "💾 Saving...");
+        setStatus(shouldRun ? "🚀 Running Pipeline..." : "💾 Saving Pipeline...");
         const formattedVars = {};
         variables.forEach(v => { if(v.name) formattedVars[v.name] = { value: v.value }; });
         try {
@@ -115,9 +122,9 @@ const PipelineWizard = () => {
                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${tokenResponse.accessToken}` },
                 body: JSON.stringify({ ...formData, pipelineName: formData.name, variables: formattedVars, runPipeline: shouldRun })
             });
-            if (res.ok) setStatus(shouldRun ? "✅ Triggered!" : "✅ Saved!");
-            else setStatus("❌ Failed.");
-        } catch (err) { setStatus("❌ Error."); }
+            if (res.ok) setStatus(shouldRun ? "✅ Created & Triggered!" : "✅ Saved Successfully!");
+            else setStatus("❌ Action Failed.");
+        } catch (err) { setStatus("❌ Error occurred."); }
     };
 
     return (
@@ -127,10 +134,10 @@ const PipelineWizard = () => {
             {/* STEP 1: SELECT REPOSITORY LIST */}
             {step === 1 && (
                 <div>
-                    <h2>1. Select a repository</h2>
+                    <h2 style={{ fontSize: "20px", marginBottom: "20px" }}>Select a repository</h2>
                     <input 
                         type="text" 
-                        placeholder="Filter by keywords" 
+                        placeholder="Filter repositories" 
                         style={styles.input} 
                         onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} 
                     />
@@ -140,9 +147,10 @@ const PipelineWizard = () => {
                                 key={r.id} 
                                 onClick={() => handleRepoSelect(r)} 
                                 style={styles.repoItem}
-                                onMouseOver={(e) => e.target.style.background = "#f3f2f1"}
-                                onMouseOut={(e) => e.target.style.background = "white"}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#f3f2f1"}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = "transparent"}
                             >
+                                <span style={{ color: "#0078d4", fontWeight: "600", marginRight: "8px" }}>{r.name.charAt(0).toUpperCase()}</span>
                                 {r.name}
                             </button>
                         ))}
@@ -153,7 +161,7 @@ const PipelineWizard = () => {
             {/* STEP 2: CONFIGURE */}
             {step === 2 && (
                 <div>
-                    <h2>2. Configure</h2>
+                    <h2>Configure your pipeline</h2>
                     <p>Repository: <b>{formData.repoName}</b></p>
                     <label>Branch</label>
                     <select style={styles.input} value={formData.branch} onChange={(e) => handleBranchChange(e.target.value)}>
@@ -166,7 +174,7 @@ const PipelineWizard = () => {
                         {yamlFiles.map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
                     <button onClick={fetchYamlPreview} style={styles.primaryBtn} disabled={!formData.yamlPath}>Review YAML</button>
-                    <button onClick={() => setStep(1)} style={{ marginLeft: "10px", background: "none", border: "none", color: "#0078d4", cursor: "pointer" }}>Back</button>
+                    <button onClick={() => setStep(1)} style={{ marginLeft: "15px", background: "none", border: "none", color: "#0078d4", cursor: "pointer" }}>Back</button>
                 </div>
             )}
 
@@ -174,7 +182,7 @@ const PipelineWizard = () => {
             {step === 3 && (
                 <div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "15px", alignItems: "center" }}>
-                        <h2 style={{ margin: 0 }}>3. Review & Run</h2>
+                        <h2 style={{ margin: 0 }}>Review your pipeline YAML</h2>
                         <div style={{ display: "flex", gap: "8px" }}>
                             <button onClick={() => setVariables([...variables, { name: '', value: '' }])} style={{ padding: "10px 15px", background: "#f0f0f0", border: "1px solid #ccc", borderRadius: "4px", cursor: "pointer", fontWeight: "600" }}>Variables</button>
                             <div style={styles.splitBtnContainer}>
@@ -193,10 +201,10 @@ const PipelineWizard = () => {
                         <div style={styles.varBox}>
                             <h4>Pipeline Variables</h4>
                             {variables.map((v, i) => (
-                                <div key={i} style={{ display: "flex", gap: "10px", marginBottom: "5px" }}>
+                                <div key={i} style={{ display: "flex", gap: "10px", marginBottom: "8px" }}>
                                     <input placeholder="Name" style={styles.input} value={v.name} onChange={(e) => { const n = [...variables]; n[i].name = e.target.value; setVariables(n); }} />
                                     <input placeholder="Value" style={styles.input} value={v.value} onChange={(e) => { const n = [...variables]; n[i].value = e.target.value; setVariables(n); }} />
-                                    <button onClick={() => setVariables(variables.filter((_, idx) => idx !== i))} style={{ border: "none", background: "none", color: "red", cursor: "pointer" }}>✕</button>
+                                    <button onClick={() => setVariables(variables.filter((_, idx) => idx !== i))} style={{ border: "none", background: "none", color: "#d13438", cursor: "pointer", fontWeight: "bold" }}>✕</button>
                                 </div>
                             ))}
                         </div>
@@ -206,10 +214,9 @@ const PipelineWizard = () => {
 
                     <div style={{ marginTop: "20px" }}>
                         <label>Pipeline Name</label>
-                        <input style={styles.input} value={formData.name} placeholder="My-New-Pipeline" onChange={(e) => setFormData({...formData, name: e.target.value})} />
+                        <input style={styles.input} value={formData.name} placeholder="Name your pipeline" onChange={(e) => setFormData({...formData, name: e.target.value})} />
                     </div>
                     
-                    {/* Restored Back Link */}
                     <button onClick={() => setStep(2)} style={styles.backBtn}>
                         ← Back to Configure
                     </button>
@@ -225,7 +232,9 @@ function App() {
     <div style={{ padding: "40px", fontFamily: "Segoe UI", maxWidth: "900px", margin: "auto" }}>
       <h1>Pipeline Generator</h1>
       <UnauthenticatedTemplate>
-        <button onClick={() => instance.loginRedirect(loginRequest)} style={{ padding: "10px 20px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px" }}>Login</button>
+        <div style={{ textAlign: "center", marginTop: "50px" }}>
+          <button onClick={() => instance.loginRedirect(loginRequest)} style={{ padding: "12px 24px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" }}>Login to Azure DevOps</button>
+        </div>
       </UnauthenticatedTemplate>
       <AuthenticatedTemplate>
           <PipelineWizard />

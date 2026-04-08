@@ -67,7 +67,26 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     } catch (e) { res.status(500).send("Error fetching branches"); }
 });
 
-// Step 3: READ YAML CONTENT (The "Review" logic)
+// NEW Step 3: Get YAML File List (This populates the dropdown you need)
+app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
+    const { branch } = req.query;
+    const version = branch.replace('refs/heads/', '');
+    try {
+        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
+        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
+        
+        // Filter for files ending in .yml or .yaml
+        const yamlFiles = response.data.value
+            .filter(item => item.path.endsWith('.yml') || item.path.endsWith('.yaml'))
+            .map(item => item.path);
+
+        res.json(yamlFiles);
+    } catch (e) {
+        res.status(500).json({ error: "Could not fetch YAML files" });
+    }
+});
+
+// Step 4: READ YAML CONTENT (The "Review" logic)
 app.get('/api/repos/:repoId/content', validateToken, async (req, res) => {
     const { path, branch } = req.query;
     const version = branch.replace('refs/heads/', '');
@@ -78,7 +97,7 @@ app.get('/api/repos/:repoId/content', validateToken, async (req, res) => {
     } catch (e) { res.status(404).json({ error: "File not found" }); }
 });
 
-// Step 4: Final Create
+// Step 5: Final Create
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
     const { pipelineName, repoId, branch, yamlPath } = req.body;
     try {

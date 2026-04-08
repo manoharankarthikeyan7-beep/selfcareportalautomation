@@ -12,7 +12,7 @@ const PipelineWizard = () => {
     const [searchTerm, setSearchTerm] = useState("");
     const [yamlContent, setYamlContent] = useState("");
     
-    // UI Logic States
+    // UI states for Variables and Dropdowns
     const [variables, setVariables] = useState([]); 
     const [showSaveOptions, setShowSaveOptions] = useState(false);
 
@@ -24,7 +24,7 @@ const PipelineWizard = () => {
         card: { background: "#fff", padding: "30px", borderRadius: "8px", border: "1px solid #ddd", marginTop: "20px" },
         input: { width: "100%", padding: "10px", marginBottom: "10px", border: "1px solid #ccc", borderRadius: "4px", fontSize: "14px", boxSizing: "border-box" },
         primaryBtn: { padding: "10px 20px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" },
-        // YAML Preview Area Style
+        // YAML Code Preview Box
         codeArea: { background: "#1e1e1e", color: "#d4d4d4", padding: "20px", borderRadius: "4px", fontFamily: "monospace", overflow: "auto", maxHeight: "400px", textAlign: "left", fontSize: "13px", lineHeight: "1.5" },
         varBox: { marginBottom: "20px", padding: "15px", background: "#f8f9fa", border: "1px solid #eee", borderRadius: "4px" },
         // Split Button Styles
@@ -32,9 +32,21 @@ const PipelineWizard = () => {
         runBtn: { padding: "10px 20px", background: "#107c10", color: "white", border: "none", borderRadius: "4px 0 0 4px", cursor: "pointer", fontWeight: "600" },
         arrowBtn: { padding: "10px 12px", background: "#0b5a0b", color: "white", border: "none", borderRadius: "0 4px 4px 0", borderLeft: "1px solid #084a08", cursor: "pointer" },
         dropdownMenu: { position: "absolute", top: "42px", right: 0, background: "white", border: "1px solid #ccc", zIndex: 100, width: "140px", boxShadow: "0 4px 8px rgba(0,0,0,0.1)" },
-        // Vertical Repository List Style
-        repoItem: { display: "block", width: "100%", padding: "12px", textAlign: "left", cursor: "pointer", border: "none", background: "none", borderBottom: "1px solid #eee", fontSize: "14px" },
-        backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0 }
+        // Vertical List Styles (Fixing the layout issue)
+        repoListContainer: { border: "1px solid #eee", borderRadius: "4px", marginTop: "10px", overflow: "hidden" },
+        repoItem: { 
+            display: "block", 
+            width: "100%", 
+            padding: "15px 20px", 
+            textAlign: "left", 
+            cursor: "pointer", 
+            border: "none", 
+            background: "white", 
+            borderBottom: "1px solid #eee", 
+            fontSize: "14px",
+            transition: "background 0.2s"
+        },
+        backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0, display: "flex", alignItems: "center" }
     };
 
     useEffect(() => {
@@ -59,13 +71,13 @@ const PipelineWizard = () => {
             setBranches(data || []);
             setStep(2);
             setStatus("");
-        } catch (err) { setStatus("Error."); }
+        } catch (err) { setStatus("Error loading branches."); }
     };
 
     const handleBranchChange = async (branchName) => {
         setFormData({ ...formData, branch: branchName, yamlPath: '' });
         if (!branchName) return;
-        setStatus("Scanning...");
+        setStatus("Fetching YAML...");
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
             const res = await fetch(`/api/repos/${formData.repoId}/yaml-files?branch=${branchName}`, {
@@ -78,7 +90,7 @@ const PipelineWizard = () => {
     };
 
     const fetchYamlPreview = async () => {
-        setStatus("Reading...");
+        setStatus("Loading Preview...");
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
             const res = await fetch(`/api/repos/${formData.repoId}/content?path=${formData.yamlPath}&branch=${formData.branch}`, {
@@ -112,19 +124,25 @@ const PipelineWizard = () => {
         <div style={styles.card}>
             {status && <p style={{ color: "#0078d4" }}><b>{status}</b></p>}
 
-            {/* STEP 1: REPOSITORY LIST */}
+            {/* STEP 1: SELECT REPOSITORY LIST */}
             {step === 1 && (
                 <div>
-                    <h2 style={{ marginBottom: "20px" }}>1. Select a repository</h2>
+                    <h2>1. Select a repository</h2>
                     <input 
                         type="text" 
                         placeholder="Filter by keywords" 
                         style={styles.input} 
                         onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} 
                     />
-                    <div style={{ maxHeight: "400px", overflowY: "auto", border: "1px solid #eee", borderRadius: "4px" }}>
+                    <div style={styles.repoListContainer}>
                         {repos.filter(r => r.name.toLowerCase().includes(searchTerm)).map(r => (
-                            <button key={r.id} onClick={() => handleRepoSelect(r)} style={styles.repoItem}>
+                            <button 
+                                key={r.id} 
+                                onClick={() => handleRepoSelect(r)} 
+                                style={styles.repoItem}
+                                onMouseOver={(e) => e.target.style.background = "#f3f2f1"}
+                                onMouseOut={(e) => e.target.style.background = "white"}
+                            >
                                 {r.name}
                             </button>
                         ))}
@@ -148,6 +166,7 @@ const PipelineWizard = () => {
                         {yamlFiles.map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
                     <button onClick={fetchYamlPreview} style={styles.primaryBtn} disabled={!formData.yamlPath}>Review YAML</button>
+                    <button onClick={() => setStep(1)} style={{ marginLeft: "10px", background: "none", border: "none", color: "#0078d4", cursor: "pointer" }}>Back</button>
                 </div>
             )}
 
@@ -157,10 +176,7 @@ const PipelineWizard = () => {
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "15px", alignItems: "center" }}>
                         <h2 style={{ margin: 0 }}>3. Review & Run</h2>
                         <div style={{ display: "flex", gap: "8px" }}>
-                            {/* Variables Button */}
-                            <button onClick={() => setVariables([...variables, { name: '', value: '' }])} style={{ padding: "10px 15px", background: "#f0f0f0", border: "1px solid #ccc", borderRadius: "4px", cursor: "pointer" }}>Variables</button>
-                            
-                            {/* Run Split Button */}
+                            <button onClick={() => setVariables([...variables, { name: '', value: '' }])} style={{ padding: "10px 15px", background: "#f0f0f0", border: "1px solid #ccc", borderRadius: "4px", cursor: "pointer", fontWeight: "600" }}>Variables</button>
                             <div style={styles.splitBtnContainer}>
                                 <button onClick={() => handleAction(true)} style={styles.runBtn}>Run</button>
                                 <button onClick={() => setShowSaveOptions(!showSaveOptions)} style={styles.arrowBtn}>▼</button>
@@ -193,7 +209,7 @@ const PipelineWizard = () => {
                         <input style={styles.input} value={formData.name} placeholder="My-New-Pipeline" onChange={(e) => setFormData({...formData, name: e.target.value})} />
                     </div>
                     
-                    {/* Back Link */}
+                    {/* Restored Back Link */}
                     <button onClick={() => setStep(2)} style={styles.backBtn}>
                         ← Back to Configure
                     </button>

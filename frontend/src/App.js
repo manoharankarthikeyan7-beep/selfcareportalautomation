@@ -42,20 +42,17 @@ const PipelineWizard = () => {
         backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0 }
     };
 
-    // Logic: Standard (48 chars + k8s/deployment) vs Unrestricted (Anything)
+    // Logic updated: Only 48 char restriction in Standard Mode. No keyword checks.
     const handleNameChange = (val) => {
         setFormData({ ...formData, name: val });
         
         if (isUnrestricted) {
-            setNameError(""); // No restrictions at all
+            setNameError(""); 
             return;
         }
 
-        const lowerVal = val.toLowerCase();
         if (val.length > 48) {
-            setNameError("Standard name cannot exceed 48 characters.");
-        } else if (!lowerVal.includes("k8s") && !lowerVal.includes("deployment")) {
-            setNameError("Standard name must contain 'k8s' or 'deployment'.");
+            setNameError("Pipeline name cannot exceed 48 characters in Standard Mode.");
         } else {
             setNameError("");
         }
@@ -190,17 +187,17 @@ const PipelineWizard = () => {
                             style={styles.toggleLink} 
                             onClick={() => { 
                                 setIsUnrestricted(!isUnrestricted); 
-                                setNameError(""); // Clear errors when switching
+                                setNameError(""); 
                             }}
                         >
-                            {isUnrestricted ? "Switch to Standard Mode (Restrictions ON)" : "Switch to Unrestricted Mode (Restrictions OFF)"}
+                            {isUnrestricted ? "Switch to Standard Mode (Max 48 chars)" : "Switch to Unrestricted Mode (No limits)"}
                         </span>
                     </div>
 
                     <input 
                         style={styles.input} 
                         value={formData.name} 
-                        placeholder={isUnrestricted ? "Enter any name" : "Must contain k8s/deployment & max 48 chars"}
+                        placeholder={isUnrestricted ? "Enter any pipeline name" : "Max 48 characters"}
                         onChange={(e) => handleNameChange(e.target.value)} 
                     />
                     {nameError && <p style={styles.errorText}>{nameError}</p>}

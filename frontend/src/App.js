@@ -13,6 +13,7 @@ const PipelineWizard = () => {
     
     // Enhancement States
     const [isManualPath, setIsManualPath] = useState(false);
+    const [isUnrestricted, setIsUnrestricted] = useState(false); // Toggle for restriction bypass
     const [nameError, setNameError] = useState("");
 
     const [formData, setFormData] = useState({ 
@@ -41,11 +42,20 @@ const PipelineWizard = () => {
         backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0 }
     };
 
-    // Updated Naming Logic: Strictly focused on 48 character limit
+    // Logic: Standard (48 chars + k8s/deployment) vs Unrestricted (Anything)
     const handleNameChange = (val) => {
         setFormData({ ...formData, name: val });
+        
+        if (isUnrestricted) {
+            setNameError(""); // No restrictions at all
+            return;
+        }
+
+        const lowerVal = val.toLowerCase();
         if (val.length > 48) {
-            setNameError("Pipeline name cannot exceed 48 characters.");
+            setNameError("Standard name cannot exceed 48 characters.");
+        } else if (!lowerVal.includes("k8s") && !lowerVal.includes("deployment")) {
+            setNameError("Standard name must contain 'k8s' or 'deployment'.");
         } else {
             setNameError("");
         }
@@ -89,9 +99,8 @@ const PipelineWizard = () => {
         } catch (err) { console.error(err); }
     };
 
-    // Logic to ensure pipeline is truly created
     const handleCreatePipeline = async () => {
-        setStatus("🚀 Communicating with Azure DevOps...");
+        setStatus("🚀 Creating pipeline in Azure DevOps...");
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
             const res = await fetch("/api/pipelines/create", {
@@ -109,13 +118,12 @@ const PipelineWizard = () => {
 
             if (res.ok) {
                 setStatus("✅ Saved Successfully!");
-                // Optional: setStep(1) or reset form here
             } else {
                 const errData = await res.json();
-                setStatus(`❌ Failed to create: ${errData.message || "Invalid configuration"}`);
+                setStatus(`❌ Error: ${errData.message || "Failed to create"}`);
             }
         } catch (err) {
-            setStatus("❌ Server connection error.");
+            setStatus("❌ Connection error.");
         }
     };
 
@@ -126,7 +134,7 @@ const PipelineWizard = () => {
             {step === 1 && (
                 <div style={{ width: "100%" }}>
                     <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>1. Select a repository</h2>
-                    <input type="text" placeholder="Filter by keywords" style={styles.input} onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} />
+                    <input type="text" placeholder="Filter repositories..." style={styles.input} onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} />
                     <div style={styles.repoListWrapper}>
                         {repos.filter(r => r.name.toLowerCase().includes(searchTerm)).map(r => (
                             <button key={r.id} onClick={() => handleRepoSelect(r)} style={styles.repoItem}>
@@ -174,12 +182,25 @@ const PipelineWizard = () => {
 
             {step === 3 && (
                 <div>
-                    <h2>Review & Name</h2>
+                    <h2>3. Review & Name</h2>
+                    
                     <label style={styles.label}>Pipeline Name</label>
+                    <div style={{ marginBottom: "10px" }}>
+                        <span 
+                            style={styles.toggleLink} 
+                            onClick={() => { 
+                                setIsUnrestricted(!isUnrestricted); 
+                                setNameError(""); // Clear errors when switching
+                            }}
+                        >
+                            {isUnrestricted ? "Switch to Standard Mode (Restrictions ON)" : "Switch to Unrestricted Mode (Restrictions OFF)"}
+                        </span>
+                    </div>
+
                     <input 
                         style={styles.input} 
                         value={formData.name} 
-                        placeholder="Enter a friendly pipeline name"
+                        placeholder={isUnrestricted ? "Enter any name" : "Must contain k8s/deployment & max 48 chars"}
                         onChange={(e) => handleNameChange(e.target.value)} 
                     />
                     {nameError && <p style={styles.errorText}>{nameError}</p>}

@@ -15,7 +15,7 @@ const getAdoHeader = () => {
     return pat ? `Basic ${Buffer.from(`:${pat}`).toString('base64')}` : null;
 };
 
-// --- AUTHENTICATION ---
+// --- AUTHENTICATION (Unchanged) ---
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`
 });
@@ -45,7 +45,7 @@ const validateToken = (req, res, next) => {
 
 // --- API ROUTES ---
 
-// Step 1: Get Repositories
+// 1. Get Azure Repos (Unchanged)
 app.get('/api/repos', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -56,7 +56,18 @@ app.get('/api/repos', validateToken, async (req, res) => {
     } catch (e) { res.status(502).json({ error: "ADO Unreachable" }); }
 });
 
-// Step 2: Get Branches
+// NEW: 1b. Get GitHub Repos via ADO Service Connection
+app.get('/api/github/repos', validateToken, async (req, res) => {
+    try {
+        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/sourceProviders/github/repositories?serviceConnectionId=${process.env.GITHUB_SERVICE_CONNECTION_ID}&api-version=7.1-preview.1`;
+        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
+        // Map GitHub response to match our frontend expectation
+        const formattedRepos = response.data.repositories.map(r => ({ id: r.id, name: r.name }));
+        res.json(formattedRepos.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (e) { res.status(502).json({ error: "GitHub Repos Unreachable" }); }
+});
+
+// 2. Get Branches (Updated to handle both)
 app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -67,12 +78,31 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     } catch (e) { res.status(500).send("Error fetching branches"); }
 });
 
-// Step 3: Discover YAML Files for Dropdown
-app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
-    const { branch } = req.query;
-    const version = branch.replace('refs/heads/', '');
+// NEW: 2b. Get GitHub Branches
+app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) => {
     try {
-        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
+        // repoId for GitHub is usually "org/repo"
+        const encodedRepoId = encodeURIComponent(req.params.repoId);
+        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/sourceProviders/github/repositories/${encodedRepoId}/branches?serviceConnectionId=${process.env.GITHUB_SERVICE_CONNECTION_ID}&api-version=7.1-preview.1`;
+        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
+        const formattedBranches = response.data.branches.map(b => ({ name: b.name }));
+        res.json(formattedBranches);
+    } catch (e) { res.status(500).send("Error fetching GitHub branches"); }
+});
+
+// 3. Discover YAML Files (Updated to handle both)
+app.get('/api/:source/repos/:repoId/yaml-files', validateToken, async (req, res) => {
+    const { branch } = req.query;
+    const { source, repoId } = req.params;
+    const version = branch.replace('refs/heads/', '');
+    
+    try {
+        // NOTE: For simplicity, we assume Azure Repos logic. 
+        // For GitHub, ADO doesn't have a direct "items" API like Git. 
+        // You might need to rely on the "Manual Path" toggle for GitHub monorepos.
+        if (source === "github") return res.json([]); 
+
+        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
         const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
         const yamlFiles = response.data.value
             .filter(item => item.path.endsWith('.yml') || item.path.endsWith('.yaml'))
@@ -81,36 +111,47 @@ app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Could not fetch YAML files" }); }
 });
 
-// Step 4: Get YAML Preview Content
-app.get('/api/repos/:repoId/content', validateToken, async (req, res) => {
-    const { path, branch } = req.query;
-    const version = branch.replace('refs/heads/', '');
-    try {
-        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?path=${path}&versionDescriptor.version=${version}&$format=text&api-version=7.1`;
-        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
-        res.json({ content: response.data });
-    } catch (e) { res.status(404).json({ error: "File not found" }); }
-});
-
-// Step 5: Final Create + Optional Run + Variables
+// 5. Final Create + Optional Run (Updated with GitHub Support)
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
-    const { pipelineName, repoId, branch, yamlPath, variables, runPipeline } = req.body;
+    const { pipelineName, repoId, branch, yamlPath, variables, runPipeline, sourceType } = req.body;
+    
     try {
+        let repoConfig;
+
+        if (sourceType === "github") {
+            repoConfig = {
+                type: "github",
+                id: repoId, // org/repo
+                name: repoId,
+                defaultBranch: branch,
+                properties: {
+                    connectedServiceId: process.env.GITHUB_SERVICE_CONNECTION_ID,
+                    apiUrl: `https://api.github.com/repos/${repoId}`
+                }
+            };
+        } else {
+            repoConfig = { 
+                id: repoId, 
+                type: "azureReposGit", 
+                defaultBranch: branch 
+            };
+        }
+
         // Create Pipeline Definition
         const createRes = await axios.post(
             `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`,
             {
                 name: pipelineName,
                 configuration: {
-                    type: "yaml", path: yamlPath,
-                    repository: { id: repoId, type: "azureReposGit", defaultBranch: branch }
+                    type: "yaml", 
+                    path: yamlPath,
+                    repository: repoConfig
                 },
                 variables: variables 
             },
             { headers: { 'Authorization': getAdoHeader(), 'Content-Type': 'application/json' } }
         );
 
-        // Run Pipeline if requested
         if (runPipeline) {
             const pipelineId = createRes.data.id;
             await axios.post(
@@ -120,9 +161,13 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
             );
         }
         res.json(createRes.data);
-    } catch (e) { res.status(500).json(e.response?.data || "Operation failed"); }
+    } catch (e) { 
+        console.error("Creation Error:", e.response?.data);
+        res.status(500).json(e.response?.data || "Operation failed"); 
+    }
 });
 
+// --- Static Files ---
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

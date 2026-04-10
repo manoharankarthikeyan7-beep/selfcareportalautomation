@@ -1,130 +1,215 @@
-const express = require('express');
-const cors = require('cors');
-const jwt = require('jsonwebtoken');
-const jwksClient = require('jwks-rsa');
-const path = require('path');
-const axios = require('axios');
-require('dotenv').config();
+import React, { useState, useEffect } from "react";
+import { useMsal, AuthenticatedTemplate, UnauthenticatedTemplate } from "@azure/msal-react";
+import { loginRequest } from "./authConfig";
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const PipelineWizard = () => {
+    const { instance, accounts } = useMsal();
+    const [step, setStep] = useState(1);
+    const [status, setStatus] = useState("");
+    const [repos, setRepos] = useState([]);
+    const [branches, setBranches] = useState([]);
+    const [yamlFiles, setYamlFiles] = useState([]);
+    const [searchTerm, setSearchTerm] = useState("");
+    
+    // Support for multiple source types
+    const [sourceType, setSourceType] = useState("azure"); // 'azure' or 'github'
+    
+    const [isManualPath, setIsManualPath] = useState(false);
+    const [isUnrestricted, setIsUnrestricted] = useState(false);
+    const [nameError, setNameError] = useState("");
 
-const getAdoHeader = () => {
-    const pat = process.env.DEVOPS_PAT;
-    return pat ? `Basic ${Buffer.from(`:${pat}`).toString('base64')}` : null;
+    const [formData, setFormData] = useState({ 
+        repoId: '', repoName: '', branch: '', yamlPath: '', name: '' 
+    });
+
+    useEffect(() => {
+        const timeoutLimit = 10 * 60 * 1000;
+        const timer = setTimeout(() => {
+            alert("Session expired (10 minutes). Re-authenticating...");
+            instance.logoutRedirect();
+        }, timeoutLimit);
+        return () => clearTimeout(timer);
+    }, [instance]);
+
+    const styles = {
+        card: { background: "#fff", padding: "30px", borderRadius: "8px", border: "1px solid #ddd", marginTop: "20px" },
+        input: { width: "100%", padding: "10px", marginBottom: "15px", border: "1px solid #ccc", borderRadius: "4px", fontSize: "14px", boxSizing: "border-box" },
+        label: { display: "block", marginBottom: "5px", fontWeight: "600", fontSize: "13px", color: "#333" },
+        errorText: { color: "#d13438", fontSize: "12px", marginTop: "-10px", marginBottom: "10px", fontWeight: "500" },
+        toggleLink: { color: "#0078d4", cursor: "pointer", fontSize: "12px", textDecoration: "underline", marginBottom: "10px", display: "inline-block" },
+        primaryBtn: { padding: "10px 20px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" },
+        repoListWrapper: { border: "1px solid #eaeaea", borderRadius: "4px", marginTop: "10px", maxHeight: "350px", overflowY: "auto", width: "100%", display: "flex", flexDirection: "column" },
+        repoItem: { display: "flex", alignItems: "center", width: "100%", padding: "14px 18px", textAlign: "left", cursor: "pointer", border: "none", background: "#fff", borderBottom: "1px solid #f3f2f1", fontSize: "14px", boxSizing: "border-box" },
+        backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0 },
+        tabContainer: { display: "flex", marginBottom: "20px", borderBottom: "1px solid #ddd" },
+        tab: (active) => ({
+            padding: "10px 20px",
+            cursor: "pointer",
+            borderBottom: active ? "3px solid #0078d4" : "3px solid transparent",
+            fontWeight: active ? "600" : "400",
+            color: active ? "#0078d4" : "#666"
+        })
+    };
+
+    const handleNameChange = (val) => {
+        setFormData({ ...formData, name: val });
+        if (isUnrestricted) { setNameError(""); return; }
+        if (val.length > 48) { setNameError("Pipeline name cannot exceed 48 characters."); } 
+        else { setNameError(""); }
+    };
+
+    // Fetch repositories based on sourceType
+    useEffect(() => {
+        const fetchRepos = async () => {
+            setRepos([]); // Clear list for new source
+            try {
+                const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
+                const endpoint = sourceType === "azure" ? "/api/repos" : "/api/github/repos";
+                const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
+                const data = await res.json();
+                setRepos(data || []);
+            } catch (err) { console.error(err); }
+        };
+        if (accounts.length > 0) fetchRepos();
+    }, [instance, accounts, sourceType]);
+
+    const handleRepoSelect = async (repo) => {
+        setFormData({ ...formData, repoId: repo.id, repoName: repo.name });
+        setStatus(`Loading ${sourceType} configuration...`);
+        try {
+            const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
+            const endpoint = sourceType === "azure" 
+                ? `/api/repos/${repo.id}/branches` 
+                : `/api/github/repos/${repo.id}/branches`;
+            
+            const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
+            const data = await res.json();
+            setBranches(data || []);
+            setStep(2);
+            setStatus("");
+        } catch (err) { setStatus("Error loading branches."); }
+    };
+
+    const handleBranchChange = async (branchName) => {
+        setFormData({ ...formData, branch: branchName, yamlPath: '' });
+        if (!branchName) return;
+        try {
+            const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
+            const baseUrl = sourceType === "azure" ? `/api/repos/${formData.repoId}` : `/api/github/repos/${formData.repoId}`;
+            const res = await fetch(`${baseUrl}/yaml-files?branch=${branchName}`, {
+                headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` }
+            });
+            const data = await res.json();
+            setYamlFiles(data || []);
+        } catch (err) { console.error(err); }
+    };
+
+    const handleCreatePipeline = async () => {
+        setStatus("🚀 Creating pipeline...");
+        try {
+            const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
+            const res = await fetch("/api/pipelines/create", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${tokenResponse.accessToken}` },
+                body: JSON.stringify({ ...formData, pipelineName: formData.name, sourceType, runPipeline: false })
+            });
+            if (res.ok) { setStatus("✅ Saved Successfully!"); } 
+            else { setStatus("❌ Failed to create pipeline."); }
+        } catch (err) { setStatus("❌ Connection error."); }
+    };
+
+    return (
+        <div style={styles.card}>
+            {status && <p style={{ color: "#0078d4", textAlign: "center" }}><b>{status}</b></p>}
+
+            {step === 1 && (
+                <div style={{ width: "100%" }}>
+                    <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>1. Select Source & Repository</h2>
+                    
+                    {/* Source Selection Tabs */}
+                    <div style={styles.tabContainer}>
+                        <div style={styles.tab(sourceType === "azure")} onClick={() => setSourceType("azure")}>Azure Repos</div>
+                        <div style={styles.tab(sourceType === "github")} onClick={() => setSourceType("github")}>GitHub</div>
+                    </div>
+
+                    <input type="text" placeholder={`Search ${sourceType} repositories...`} style={styles.input} onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} />
+                    <div style={styles.repoListWrapper}>
+                        {repos.filter(r => r.name.toLowerCase().includes(searchTerm)).map(r => (
+                            <button key={r.id} onClick={() => handleRepoSelect(r)} style={styles.repoItem}>
+                                <div style={{ width: "24px", color: sourceType === "azure" ? "#0078d4" : "#24292e", fontWeight: "bold" }}>
+                                    {sourceType === "azure" ? "A" : "G"}
+                                </div>
+                                <span style={{ flexGrow: 1 }}>{r.name}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {step === 2 && (
+                <div>
+                    <h2>2. Configure Path ({sourceType === "azure" ? "Azure" : "GitHub"})</h2>
+                    <p>Repository: <b>{formData.repoName}</b></p>
+                    <label style={styles.label}>Branch</label>
+                    <select style={styles.input} value={formData.branch} onChange={(e) => handleBranchChange(e.target.value)}>
+                        <option value="">-- Select Branch --</option>
+                        {branches.map(b => <option key={b.name} value={b.name}>{b.name.replace('refs/heads/', '')}</option>)}
+                    </select>
+
+                    <label style={styles.label}>YAML Path</label>
+                    <span style={styles.toggleLink} onClick={() => setIsManualPath(!isManualPath)}>
+                        {isManualPath ? "← Use file picker" : "Paste path manually →"}
+                    </span>
+
+                    {isManualPath ? (
+                        <input style={styles.input} placeholder="e.g. /azure-pipelines.yml" value={formData.yamlPath} onChange={(e) => setFormData({...formData, yamlPath: e.target.value})} />
+                    ) : (
+                        <select style={styles.input} value={formData.yamlPath} onChange={(e) => setFormData({...formData, yamlPath: e.target.value})}>
+                            <option value="">-- Select File --</option>
+                            {yamlFiles.map(f => <option key={f} value={f}>{f}</option>)}
+                        </select>
+                    )}
+
+                    <button onClick={() => setStep(3)} style={styles.primaryBtn} disabled={!formData.yamlPath}>Next</button>
+                    <button onClick={() => setStep(1)} style={styles.backBtn}>Back</button>
+                </div>
+            )}
+
+            {step === 3 && (
+                <div>
+                    <h2>3. Review & Name</h2>
+                    <label style={styles.label}>Pipeline Name</label>
+                    <div style={{ marginBottom: "10px" }}>
+                        <span style={styles.toggleLink} onClick={() => { setIsUnrestricted(!isUnrestricted); setNameError(""); }}>
+                            {isUnrestricted ? "Switch to Standard Mode" : "Switch to Unrestricted Mode"}
+                        </span>
+                    </div>
+                    <input style={styles.input} value={formData.name} placeholder="Pipeline Name" onChange={(e) => handleNameChange(e.target.value)} />
+                    {nameError && <p style={styles.errorText}>{nameError}</p>}
+
+                    <button style={styles.primaryBtn} disabled={!!nameError || !formData.name} onClick={handleCreatePipeline}>Create Pipeline</button>
+                    <button onClick={() => setStep(2)} style={styles.backBtn}>← Back</button>
+                </div>
+            )}
+        </div>
+    );
 };
 
-// --- AUTHENTICATION ---
-const client = jwksClient({
-  jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`
-});
-
-function getKey(header, callback) {
-  client.getSigningKey(header.kid, (err, key) => {
-    if (err) return callback(err);
-    callback(null, key.getPublicKey());
-  });
+function App() {
+    const { instance } = useMsal();
+    return (
+        <div style={{ padding: "40px", fontFamily: "Segoe UI", maxWidth: "900px", margin: "auto" }}>
+            <h1>Pipeline Generator</h1>
+            <UnauthenticatedTemplate>
+                <div style={{ textAlign: "center", marginTop: "50px" }}>
+                    <button onClick={() => instance.loginRedirect(loginRequest)} style={{ padding: "12px 24px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" }}>Login to Azure</button>
+                </div>
+            </UnauthenticatedTemplate>
+            <AuthenticatedTemplate>
+                <PipelineWizard />
+            </AuthenticatedTemplate>
+        </div>
+    );
 }
 
-const validateToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).send('Unauthorized');
-
-  jwt.verify(token, getKey, {
-    audience: `api://${process.env.AZURE_API_CLIENT_ID}`,
-    issuer: `https://sts.windows.net/${process.env.AZURE_TENANT_ID}/`,
-    algorithms: ['RS256']
-  }, (err, decoded) => {
-    if (err) return res.status(403).send('Invalid Token');
-    if (decoded.tid !== process.env.AZURE_TENANT_ID) return res.status(403).send('Unauthorized Tenant');
-    req.user = decoded;
-    next();
-  });
-};
-
-// --- API ROUTES ---
-
-// Step 1: Get Repositories
-app.get('/api/repos', validateToken, async (req, res) => {
-    try {
-        const response = await axios.get(
-            `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories?api-version=7.1`,
-            { headers: { 'Authorization': getAdoHeader() } }
-        );
-        res.json(response.data.value.sort((a, b) => a.name.localeCompare(b.name)));
-    } catch (e) { res.status(502).json({ error: "ADO Unreachable" }); }
-});
-
-// Step 2: Get Branches
-app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
-    try {
-        const response = await axios.get(
-            `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/refs?filter=heads/&api-version=7.1`,
-            { headers: { 'Authorization': getAdoHeader() } }
-        );
-        res.json(response.data.value);
-    } catch (e) { res.status(500).send("Error fetching branches"); }
-});
-
-// Step 3: Discover YAML Files for Dropdown
-app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
-    const { branch } = req.query;
-    const version = branch.replace('refs/heads/', '');
-    try {
-        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
-        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
-        const yamlFiles = response.data.value
-            .filter(item => item.path.endsWith('.yml') || item.path.endsWith('.yaml'))
-            .map(item => item.path);
-        res.json(yamlFiles);
-    } catch (e) { res.status(500).json({ error: "Could not fetch YAML files" }); }
-});
-
-// Step 4: Get YAML Preview Content
-app.get('/api/repos/:repoId/content', validateToken, async (req, res) => {
-    const { path, branch } = req.query;
-    const version = branch.replace('refs/heads/', '');
-    try {
-        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?path=${path}&versionDescriptor.version=${version}&$format=text&api-version=7.1`;
-        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
-        res.json({ content: response.data });
-    } catch (e) { res.status(404).json({ error: "File not found" }); }
-});
-
-// Step 5: Final Create + Optional Run + Variables
-app.post('/api/pipelines/create', validateToken, async (req, res) => {
-    const { pipelineName, repoId, branch, yamlPath, variables, runPipeline } = req.body;
-    try {
-        // Create Pipeline Definition
-        const createRes = await axios.post(
-            `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`,
-            {
-                name: pipelineName,
-                configuration: {
-                    type: "yaml", path: yamlPath,
-                    repository: { id: repoId, type: "azureReposGit", defaultBranch: branch }
-                },
-                variables: variables 
-            },
-            { headers: { 'Authorization': getAdoHeader(), 'Content-Type': 'application/json' } }
-        );
-
-        // Run Pipeline if requested
-        if (runPipeline) {
-            const pipelineId = createRes.data.id;
-            await axios.post(
-                `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines/${pipelineId}/runs?api-version=7.0`,
-                { resources: { repositories: { self: { refName: branch } } } },
-                { headers: { 'Authorization': getAdoHeader() } }
-            );
-        }
-        res.json(createRes.data);
-    } catch (e) { res.status(500).json(e.response?.data || "Operation failed"); }
-});
-
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => console.log(`Server online on port ${PORT}`));
+export default App;

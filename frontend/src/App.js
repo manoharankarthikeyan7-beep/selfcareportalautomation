@@ -11,16 +11,17 @@ const PipelineWizard = () => {
     const [yamlFiles, setYamlFiles] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
     
-    // Enhancement States
+    // Support for multiple source types
+    const [sourceType, setSourceType] = useState("azure"); // 'azure' or 'github'
+    
     const [isManualPath, setIsManualPath] = useState(false);
-    const [isUnrestricted, setIsUnrestricted] = useState(false); // Toggle for restriction bypass
+    const [isUnrestricted, setIsUnrestricted] = useState(false);
     const [nameError, setNameError] = useState("");
 
     const [formData, setFormData] = useState({ 
         repoId: '', repoName: '', branch: '', yamlPath: '', name: '' 
     });
 
-    // 10-Minute Session Timeout Enhancement
     useEffect(() => {
         const timeoutLimit = 10 * 60 * 1000;
         const timer = setTimeout(() => {
@@ -39,43 +40,49 @@ const PipelineWizard = () => {
         primaryBtn: { padding: "10px 20px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" },
         repoListWrapper: { border: "1px solid #eaeaea", borderRadius: "4px", marginTop: "10px", maxHeight: "350px", overflowY: "auto", width: "100%", display: "flex", flexDirection: "column" },
         repoItem: { display: "flex", alignItems: "center", width: "100%", padding: "14px 18px", textAlign: "left", cursor: "pointer", border: "none", background: "#fff", borderBottom: "1px solid #f3f2f1", fontSize: "14px", boxSizing: "border-box" },
-        backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0 }
+        backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0 },
+        tabContainer: { display: "flex", marginBottom: "20px", borderBottom: "1px solid #ddd" },
+        tab: (active) => ({
+            padding: "10px 20px",
+            cursor: "pointer",
+            borderBottom: active ? "3px solid #0078d4" : "3px solid transparent",
+            fontWeight: active ? "600" : "400",
+            color: active ? "#0078d4" : "#666"
+        })
     };
 
-    // Logic updated: Only 48 char restriction in Standard Mode. No keyword checks.
     const handleNameChange = (val) => {
         setFormData({ ...formData, name: val });
-        
-        if (isUnrestricted) {
-            setNameError(""); 
-            return;
-        }
-
-        if (val.length > 48) {
-            setNameError("Pipeline name cannot exceed 48 characters in Standard Mode.");
-        } else {
-            setNameError("");
-        }
+        if (isUnrestricted) { setNameError(""); return; }
+        if (val.length > 48) { setNameError("Pipeline name cannot exceed 48 characters."); } 
+        else { setNameError(""); }
     };
 
+    // Fetch repositories based on sourceType
     useEffect(() => {
         const fetchRepos = async () => {
+            setRepos([]); // Clear list for new source
             try {
                 const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
-                const res = await fetch("/api/repos", { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
+                const endpoint = sourceType === "azure" ? "/api/repos" : "/api/github/repos";
+                const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
                 const data = await res.json();
                 setRepos(data || []);
             } catch (err) { console.error(err); }
         };
         if (accounts.length > 0) fetchRepos();
-    }, [instance, accounts]);
+    }, [instance, accounts, sourceType]);
 
     const handleRepoSelect = async (repo) => {
         setFormData({ ...formData, repoId: repo.id, repoName: repo.name });
-        setStatus("Loading configuration...");
+        setStatus(`Loading ${sourceType} configuration...`);
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
-            const res = await fetch(`/api/repos/${repo.id}/branches`, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
+            const endpoint = sourceType === "azure" 
+                ? `/api/repos/${repo.id}/branches` 
+                : `/api/github/repos/${repo.id}/branches`;
+            
+            const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
             const data = await res.json();
             setBranches(data || []);
             setStep(2);
@@ -88,7 +95,8 @@ const PipelineWizard = () => {
         if (!branchName) return;
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
-            const res = await fetch(`/api/repos/${formData.repoId}/yaml-files?branch=${branchName}`, {
+            const baseUrl = sourceType === "azure" ? `/api/repos/${formData.repoId}` : `/api/github/repos/${formData.repoId}`;
+            const res = await fetch(`${baseUrl}/yaml-files?branch=${branchName}`, {
                 headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` }
             });
             const data = await res.json();
@@ -97,31 +105,17 @@ const PipelineWizard = () => {
     };
 
     const handleCreatePipeline = async () => {
-        setStatus("🚀 Creating pipeline in Azure DevOps...");
+        setStatus("🚀 Creating pipeline...");
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
             const res = await fetch("/api/pipelines/create", {
                 method: "POST",
-                headers: { 
-                    "Content-Type": "application/json", 
-                    "Authorization": `Bearer ${tokenResponse.accessToken}` 
-                },
-                body: JSON.stringify({ 
-                    ...formData, 
-                    pipelineName: formData.name, 
-                    runPipeline: false 
-                })
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${tokenResponse.accessToken}` },
+                body: JSON.stringify({ ...formData, pipelineName: formData.name, sourceType, runPipeline: false })
             });
-
-            if (res.ok) {
-                setStatus("✅ Saved Successfully!");
-            } else {
-                const errData = await res.json();
-                setStatus(`❌ Error: ${errData.message || "Failed to create"}`);
-            }
-        } catch (err) {
-            setStatus("❌ Connection error.");
-        }
+            if (res.ok) { setStatus("✅ Saved Successfully!"); } 
+            else { setStatus("❌ Failed to create pipeline."); }
+        } catch (err) { setStatus("❌ Connection error."); }
     };
 
     return (
@@ -130,12 +124,21 @@ const PipelineWizard = () => {
 
             {step === 1 && (
                 <div style={{ width: "100%" }}>
-                    <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>1. Select a repository</h2>
-                    <input type="text" placeholder="Filter repositories..." style={styles.input} onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} />
+                    <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>1. Select Source & Repository</h2>
+                    
+                    {/* Source Selection Tabs */}
+                    <div style={styles.tabContainer}>
+                        <div style={styles.tab(sourceType === "azure")} onClick={() => setSourceType("azure")}>Azure Repos</div>
+                        <div style={styles.tab(sourceType === "github")} onClick={() => setSourceType("github")}>GitHub</div>
+                    </div>
+
+                    <input type="text" placeholder={`Search ${sourceType} repositories...`} style={styles.input} onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} />
                     <div style={styles.repoListWrapper}>
                         {repos.filter(r => r.name.toLowerCase().includes(searchTerm)).map(r => (
                             <button key={r.id} onClick={() => handleRepoSelect(r)} style={styles.repoItem}>
-                                <div style={{ width: "24px", color: "#0078d4", fontWeight: "bold" }}>{r.name.charAt(0).toUpperCase()}</div>
+                                <div style={{ width: "24px", color: sourceType === "azure" ? "#0078d4" : "#24292e", fontWeight: "bold" }}>
+                                    {sourceType === "azure" ? "A" : "G"}
+                                </div>
                                 <span style={{ flexGrow: 1 }}>{r.name}</span>
                             </button>
                         ))}
@@ -145,7 +148,7 @@ const PipelineWizard = () => {
 
             {step === 2 && (
                 <div>
-                    <h2>2. Configure Path</h2>
+                    <h2>2. Configure Path ({sourceType === "azure" ? "Azure" : "GitHub"})</h2>
                     <p>Repository: <b>{formData.repoName}</b></p>
                     <label style={styles.label}>Branch</label>
                     <select style={styles.input} value={formData.branch} onChange={(e) => handleBranchChange(e.target.value)}>
@@ -155,16 +158,11 @@ const PipelineWizard = () => {
 
                     <label style={styles.label}>YAML Path</label>
                     <span style={styles.toggleLink} onClick={() => setIsManualPath(!isManualPath)}>
-                        {isManualPath ? "← Use file picker" : "Paste path manually (Monorepo) →"}
+                        {isManualPath ? "← Use file picker" : "Paste path manually →"}
                     </span>
 
                     {isManualPath ? (
-                        <input 
-                            style={styles.input} 
-                            placeholder="e.g. /folder/azure-pipelines.yml" 
-                            value={formData.yamlPath}
-                            onChange={(e) => setFormData({...formData, yamlPath: e.target.value})}
-                        />
+                        <input style={styles.input} placeholder="e.g. /azure-pipelines.yml" value={formData.yamlPath} onChange={(e) => setFormData({...formData, yamlPath: e.target.value})} />
                     ) : (
                         <select style={styles.input} value={formData.yamlPath} onChange={(e) => setFormData({...formData, yamlPath: e.target.value})}>
                             <option value="">-- Select File --</option>
@@ -180,36 +178,17 @@ const PipelineWizard = () => {
             {step === 3 && (
                 <div>
                     <h2>3. Review & Name</h2>
-                    
                     <label style={styles.label}>Pipeline Name</label>
                     <div style={{ marginBottom: "10px" }}>
-                        <span 
-                            style={styles.toggleLink} 
-                            onClick={() => { 
-                                setIsUnrestricted(!isUnrestricted); 
-                                setNameError(""); 
-                            }}
-                        >
-                            {isUnrestricted ? "Switch to Standard Mode (Max 48 chars)" : "Switch to Unrestricted Mode (No limits)"}
+                        <span style={styles.toggleLink} onClick={() => { setIsUnrestricted(!isUnrestricted); setNameError(""); }}>
+                            {isUnrestricted ? "Switch to Standard Mode" : "Switch to Unrestricted Mode"}
                         </span>
                     </div>
-
-                    <input 
-                        style={styles.input} 
-                        value={formData.name} 
-                        placeholder={isUnrestricted ? "Enter any pipeline name" : "Max 48 characters"}
-                        onChange={(e) => handleNameChange(e.target.value)} 
-                    />
+                    <input style={styles.input} value={formData.name} placeholder="Pipeline Name" onChange={(e) => handleNameChange(e.target.value)} />
                     {nameError && <p style={styles.errorText}>{nameError}</p>}
 
-                    <button 
-                        style={styles.primaryBtn} 
-                        disabled={!!nameError || !formData.name}
-                        onClick={handleCreatePipeline}
-                    >
-                        Create Pipeline
-                    </button>
-                    <button onClick={() => setStep(2)} style={styles.backBtn}>← Back to Configure</button>
+                    <button style={styles.primaryBtn} disabled={!!nameError || !formData.name} onClick={handleCreatePipeline}>Create Pipeline</button>
+                    <button onClick={() => setStep(2)} style={styles.backBtn}>← Back</button>
                 </div>
             )}
         </div>
@@ -217,20 +196,20 @@ const PipelineWizard = () => {
 };
 
 function App() {
-  const { instance } = useMsal();
-  return (
-    <div style={{ padding: "40px", fontFamily: "Segoe UI", maxWidth: "900px", margin: "auto" }}>
-      <h1>Pipeline Generator</h1>
-      <UnauthenticatedTemplate>
-        <div style={{ textAlign: "center", marginTop: "50px" }}>
-          <button onClick={() => instance.loginRedirect(loginRequest)} style={{ padding: "12px 24px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" }}>Login to Azure</button>
+    const { instance } = useMsal();
+    return (
+        <div style={{ padding: "40px", fontFamily: "Segoe UI", maxWidth: "900px", margin: "auto" }}>
+            <h1>Pipeline Generator</h1>
+            <UnauthenticatedTemplate>
+                <div style={{ textAlign: "center", marginTop: "50px" }}>
+                    <button onClick={() => instance.loginRedirect(loginRequest)} style={{ padding: "12px 24px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" }}>Login to Azure</button>
+                </div>
+            </UnauthenticatedTemplate>
+            <AuthenticatedTemplate>
+                <PipelineWizard />
+            </AuthenticatedTemplate>
         </div>
-      </UnauthenticatedTemplate>
-      <AuthenticatedTemplate>
-          <PipelineWizard />
-      </AuthenticatedTemplate>
-    </div>
-  );
+    );
 }
 
 export default App;

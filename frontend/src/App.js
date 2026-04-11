@@ -22,6 +22,7 @@ const PipelineWizard = () => {
         repoId: '', repoName: '', branch: '', yamlPath: '', name: '' 
     });
 
+    // --- SESSION TIMEOUT LOGIC RESTORED ---
     useEffect(() => {
         const timeoutLimit = 10 * 60 * 1000;
         const timer = setTimeout(() => {
@@ -58,10 +59,9 @@ const PipelineWizard = () => {
         else { setNameError(""); }
     };
 
-    // Fetch repositories based on sourceType
     useEffect(() => {
         const fetchRepos = async () => {
-            setRepos([]); // Clear list for new source
+            setRepos([]);
             try {
                 const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
                 const endpoint = sourceType === "azure" ? "/api/repos" : "/api/github/repos";
@@ -125,13 +125,10 @@ const PipelineWizard = () => {
             {step === 1 && (
                 <div style={{ width: "100%" }}>
                     <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>1. Select Source & Repository</h2>
-                    
-                    {/* Source Selection Tabs */}
                     <div style={styles.tabContainer}>
                         <div style={styles.tab(sourceType === "azure")} onClick={() => setSourceType("azure")}>Azure Repos</div>
                         <div style={styles.tab(sourceType === "github")} onClick={() => setSourceType("github")}>GitHub</div>
                     </div>
-
                     <input type="text" placeholder={`Search ${sourceType} repositories...`} style={styles.input} onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} />
                     <div style={styles.repoListWrapper}>
                         {repos.filter(r => r.name.toLowerCase().includes(searchTerm)).map(r => (
@@ -171,7 +168,7 @@ const PipelineWizard = () => {
                     )}
 
                     <button onClick={() => setStep(3)} style={styles.primaryBtn} disabled={!formData.yamlPath}>Next</button>
-                    <button onClick={() => setStep(1)} style={styles.backBtn}>Back</button>
+                    <button onClick={() => setStep(1)} style={styles.backBtn} style={{marginLeft: '15px'}}>Back</button>
                 </div>
             )}
 
@@ -186,9 +183,8 @@ const PipelineWizard = () => {
                     </div>
                     <input style={styles.input} value={formData.name} placeholder="Pipeline Name" onChange={(e) => handleNameChange(e.target.value)} />
                     {nameError && <p style={styles.errorText}>{nameError}</p>}
-
                     <button style={styles.primaryBtn} disabled={!!nameError || !formData.name} onClick={handleCreatePipeline}>Create Pipeline</button>
-                    <button onClick={() => setStep(2)} style={styles.backBtn}>← Back</button>
+                    <button onClick={() => setStep(2)} style={styles.backBtn} style={{marginLeft: '15px'}}>← Back</button>
                 </div>
             )}
         </div>

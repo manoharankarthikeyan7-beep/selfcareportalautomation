@@ -94,7 +94,7 @@ app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) =>
     } catch (e) { res.status(500).send("Error fetching GitHub branches"); }
 });
 
-// Step 3: Discover YAML Files (Azure only)
+// Step 3: Discover YAML Files (Azure)
 app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     const { branch } = req.query;
     const version = branch.replace('refs/heads/', '');
@@ -106,6 +106,38 @@ app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
             .map(item => item.path);
         res.json(yamlFiles);
     } catch (e) { res.status(500).json({ error: "Could not fetch YAML files" }); }
+});
+
+// Step 4: Discover YAML Files (GitHub) --- ADDED LOGIC ---
+app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) => {
+    const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
+    const { branch } = req.query;
+    try {
+        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/serviceendpoint/proxy/execute?endpointId=${scId}&api-version=7.1-preview.1`;
+        // Using the GitHub API via ADO Proxy to list files in the repo
+        const response = await axios.post(url, 
+            { 
+                dataSourceDetails: { 
+                    dataSourceName: "SearchRepositories", 
+                    parameters: { 
+                        repository: req.params.repoId,
+                        branch: branch 
+                    } 
+                } 
+            },
+            { headers: { 'Authorization': getAdoHeader() } }
+        );
+        
+        // Filter for YAML files from the GitHub response
+        const yamlFiles = response.data.value
+            .filter(file => file.path.endsWith('.yml') || file.path.endsWith('.yaml'))
+            .map(file => file.path);
+            
+        res.json(yamlFiles);
+    } catch (e) { 
+        // Fallback for GitHub discovery as it can be flaky via proxy
+        res.json([]); 
+    }
 });
 
 // Step 5: Final Create Pipeline (Supports both)

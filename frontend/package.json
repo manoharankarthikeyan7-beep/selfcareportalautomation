@@ -1,17 +1,30 @@
 {
-  "name": "pipeline-generator-frontend",
+  "name": "pipeline-generator-combined",
   "version": "1.0.0",
+  "description": "Express backend serving React frontend",
+  "main": "index.js",
   "dependencies": {
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^3.1.0",
+    "path": "^0.12.7",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
     "@azure/msal-browser": "^3.0.0",
-    "@azure/msal-react": "^2.0.0",
-    "axios": "^1.6.0"
+    "@azure/msal-react": "^2.0.0"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build"
+    "start": "node index.js",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "browserslist": {
     "production": [

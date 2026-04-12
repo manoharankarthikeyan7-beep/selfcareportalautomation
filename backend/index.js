@@ -15,6 +15,11 @@ const getAdoHeader = () => {
     return pat ? `Basic ${Buffer.from(`:${pat}`).toString('base64')}` : null;
 };
 
+// New Helper for Direct GitHub Access
+const getGitHubHeader = () => {
+    return process.env.GITHUB_TOKEN ? `token ${process.env.GITHUB_TOKEN}` : null;
+};
+
 // --- AUTHENTICATION ---
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`
@@ -45,7 +50,7 @@ const validateToken = (req, res, next) => {
 
 // --- API ROUTES ---
 
-// Step 1: Get Repositories (Azure)
+// Step 1: Azure Repos
 app.get('/api/repos', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -56,21 +61,29 @@ app.get('/api/repos', validateToken, async (req, res) => {
     } catch (e) { res.status(502).json({ error: "ADO Unreachable" }); }
 });
 
-// Step 1.1: Get Repositories (GitHub via Service Connection)
+// Step 1.1: GitHub Repos (Direct + Proxy Fallback)
 app.get('/api/github/repos', validateToken, async (req, res) => {
+    const ghToken = getGitHubHeader();
+    if (ghToken) {
+        try {
+            const response = await axios.get('https://api.github.com/user/repos?per_page=100', {
+                headers: { 'Authorization': ghToken }
+            });
+            return res.json(response.data.map(r => ({ id: r.full_name, name: r.full_name })).sort((a, b) => a.name.localeCompare(b.name)));
+        } catch (e) { console.error("Direct GH Error, falling back to Proxy..."); }
+    }
+
+    // Fallback to Service Connection Proxy
     const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
     try {
         const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/serviceendpoint/proxy/execute?endpointId=${scId}&api-version=7.1-preview.1`;
-        const response = await axios.post(url, 
-            { dataSourceDetails: { dataSourceName: "Repos" } },
-            { headers: { 'Authorization': getAdoHeader() } }
-        );
+        const response = await axios.post(url, { dataSourceDetails: { dataSourceName: "Repos" } }, { headers: { 'Authorization': getAdoHeader() } });
         const formatted = response.data.value.map(r => ({ id: r.name, name: r.name }));
         res.json(formatted.sort((a, b) => a.name.localeCompare(b.name)));
     } catch (e) { res.status(502).json({ error: "GitHub Repos Unreachable" }); }
 });
 
-// Step 2: Get Branches (Azure)
+// Step 2: Azure Branches
 app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -81,70 +94,64 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     } catch (e) { res.status(500).send("Error fetching branches"); }
 });
 
-// Step 2.1: Get Branches (GitHub)
+// Step 2.1: GitHub Branches (Direct + Proxy Fallback)
 app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) => {
+    const ghToken = getGitHubHeader();
+    const repoPath = req.params.repoId; // e.g. "Owner/Repo"
+
+    if (ghToken && repoPath.includes('/')) {
+        try {
+            const response = await axios.get(`https://api.github.com/repos/${repoPath}/branches`, {
+                headers: { 'Authorization': ghToken }
+            });
+            return res.json(response.data.map(b => ({ name: b.name })));
+        } catch (e) { console.error("Direct GH Branch Error, falling back..."); }
+    }
+
     const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
     try {
         const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/serviceendpoint/proxy/execute?endpointId=${scId}&api-version=7.1-preview.1`;
         const response = await axios.post(url, 
-            { dataSourceDetails: { dataSourceName: "Branches", parameters: { repository: req.params.repoId } } },
+            { dataSourceDetails: { dataSourceName: "Branches", parameters: { repository: repoPath } } },
             { headers: { 'Authorization': getAdoHeader() } }
         );
         res.json(response.data.value);
     } catch (e) { res.status(500).send("Error fetching GitHub branches"); }
 });
 
-// Step 3: Discover YAML Files (Azure)
+// Step 3 & 4: YAML Discovery (Simplified)
 app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     const { branch } = req.query;
     const version = branch.replace('refs/heads/', '');
     try {
         const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
         const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
-        const yamlFiles = response.data.value
-            .filter(item => item.path.endsWith('.yml') || item.path.endsWith('.yaml'))
-            .map(item => item.path);
-        res.json(yamlFiles);
-    } catch (e) { res.status(500).json({ error: "Could not fetch YAML files" }); }
+        res.json(response.data.value.filter(i => i.path.endsWith('.yml') || i.path.endsWith('.yaml')).map(i => i.path));
+    } catch (e) { res.status(500).json([]); }
 });
 
-// Step 4: Discover YAML Files (GitHub) --- ADDED LOGIC ---
 app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) => {
-    const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
+    const { repoId } = req.params;
     const { branch } = req.query;
-    try {
-        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/serviceendpoint/proxy/execute?endpointId=${scId}&api-version=7.1-preview.1`;
-        // Using the GitHub API via ADO Proxy to list files in the repo
-        const response = await axios.post(url, 
-            { 
-                dataSourceDetails: { 
-                    dataSourceName: "SearchRepositories", 
-                    parameters: { 
-                        repository: req.params.repoId,
-                        branch: branch 
-                    } 
-                } 
-            },
-            { headers: { 'Authorization': getAdoHeader() } }
-        );
-        
-        // Filter for YAML files from the GitHub response
-        const yamlFiles = response.data.value
-            .filter(file => file.path.endsWith('.yml') || file.path.endsWith('.yaml'))
-            .map(file => file.path);
-            
-        res.json(yamlFiles);
-    } catch (e) { 
-        // Fallback for GitHub discovery as it can be flaky via proxy
-        res.json([]); 
+    const ghToken = getGitHubHeader();
+
+    if (ghToken && repoId.includes('/')) {
+        try {
+            const url = `https://api.github.com/repos/${repoId}/git/trees/${branch}?recursive=1`;
+            const response = await axios.get(url, { headers: { 'Authorization': ghToken } });
+            const files = response.data.tree
+                .filter(f => f.type === "blob" && (f.path.endsWith('.yml') || f.path.endsWith('.yaml')))
+                .map(f => "/" + f.path);
+            return res.json(files);
+        } catch (e) { console.error("GitHub Tree Error"); }
     }
+    res.json([]);
 });
 
-// Step 5: Final Create Pipeline (Supports both)
+// Step 5: Create Pipeline
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
     const { pipelineName, repoId, branch, yamlPath, variables, sourceType } = req.body;
     const isGitHub = sourceType === "github";
-    
     try {
         const payload = {
             name: pipelineName,
@@ -157,10 +164,8 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
                     defaultBranch: branch,
                     connection: isGitHub ? { id: process.env.GITHUB_SERVICE_CONNECTION_ID } : undefined
                 }
-            },
-            variables: variables 
+            }
         };
-
         const createRes = await axios.post(
             `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`,
             payload,

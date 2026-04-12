@@ -47,7 +47,7 @@ const validateToken = (req, res, next) => {
   });
 };
 
-// --- API ROUTES ---
+// --- API ROUTES (MUST BE ABOVE STATIC SERVING) ---
 
 app.get('/api/repos', validateToken, async (req, res) => {
     try {
@@ -167,9 +167,11 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
     } catch (e) { res.status(500).json(e.response?.data || "Operation failed"); }
 });
 
-// Serving the React App
+// --- SERVING REACT APP (Wildcard MUST be last) ---
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', () => console.log(`Server online on port ${PORT}`));

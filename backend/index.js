@@ -67,7 +67,10 @@ app.get('/api/github/repos', validateToken, async (req, res) => {
     if (ghToken) {
         try {
             const response = await axios.get('https://api.github.com/user/repos?per_page=100', {
-                headers: { 'Authorization': ghToken }
+                headers: { 
+                    'Authorization': ghToken,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
             });
             return res.json(response.data.map(r => ({ id: r.full_name, name: r.full_name })).sort((a, b) => a.name.localeCompare(b.name)));
         } catch (e) { console.error("Direct GH Error, falling back to Proxy..."); }
@@ -102,7 +105,10 @@ app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) =>
     if (ghToken && repoPath.includes('/')) {
         try {
             const response = await axios.get(`https://api.github.com/repos/${repoPath}/branches`, {
-                headers: { 'Authorization': ghToken }
+                headers: { 
+                    'Authorization': ghToken,
+                    'Accept': 'application/vnd.github.v3+json' 
+                }
             });
             return res.json(response.data.map(b => ({ name: b.name })));
         } catch (e) { console.error("Direct GH Branch Error, falling back..."); }
@@ -115,68 +121,10 @@ app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) =>
             { dataSourceDetails: { dataSourceName: "Branches", parameters: { repository: repoPath } } },
             { headers: { 'Authorization': getAdoHeader() } }
         );
-        res.json(response.data.value);
+        res.json(response.data.value || []);
     } catch (e) { res.status(500).send("Error fetching GitHub branches"); }
 });
 
 // Step 3 & 4: YAML Discovery (Simplified)
 app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
-    const { branch } = req.query;
-    const version = branch.replace('refs/heads/', '');
-    try {
-        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
-        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
-        res.json(response.data.value.filter(i => i.path.endsWith('.yml') || i.path.endsWith('.yaml')).map(i => i.path));
-    } catch (e) { res.status(500).json([]); }
-});
-
-app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) => {
-    const { repoId } = req.params;
-    const { branch } = req.query;
-    const ghToken = getGitHubHeader();
-
-    if (ghToken && repoId.includes('/')) {
-        try {
-            const url = `https://api.github.com/repos/${repoId}/git/trees/${branch}?recursive=1`;
-            const response = await axios.get(url, { headers: { 'Authorization': ghToken } });
-            const files = response.data.tree
-                .filter(f => f.type === "blob" && (f.path.endsWith('.yml') || f.path.endsWith('.yaml')))
-                .map(f => "/" + f.path);
-            return res.json(files);
-        } catch (e) { console.error("GitHub Tree Error"); }
-    }
-    res.json([]);
-});
-
-// Step 5: Create Pipeline
-app.post('/api/pipelines/create', validateToken, async (req, res) => {
-    const { pipelineName, repoId, branch, yamlPath, variables, sourceType } = req.body;
-    const isGitHub = sourceType === "github";
-    try {
-        const payload = {
-            name: pipelineName,
-            configuration: {
-                type: "yaml",
-                path: yamlPath,
-                repository: {
-                    id: repoId,
-                    type: isGitHub ? "github" : "azureReposGit",
-                    defaultBranch: branch,
-                    connection: isGitHub ? { id: process.env.GITHUB_SERVICE_CONNECTION_ID } : undefined
-                }
-            }
-        };
-        const createRes = await axios.post(
-            `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`,
-            payload,
-            { headers: { 'Authorization': getAdoHeader(), 'Content-Type': 'application/json' } }
-        );
-        res.json(createRes.data);
-    } catch (e) { res.status(500).json(e.response?.data || "Operation failed"); }
-});
-
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => console.log(`Server online on port ${PORT}`));
+    const { branch } = req.

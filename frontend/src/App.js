@@ -11,9 +11,7 @@ const PipelineWizard = () => {
     const [yamlFiles, setYamlFiles] = useState([]);
     const [searchTerm, setSearchTerm] = useState("");
     
-    // Support for multiple source types
-    const [sourceType, setSourceType] = useState("azure"); // 'azure' or 'github'
-    
+    const [sourceType, setSourceType] = useState("azure"); 
     const [isManualPath, setIsManualPath] = useState(false);
     const [isUnrestricted, setIsUnrestricted] = useState(false);
     const [nameError, setNameError] = useState("");
@@ -22,7 +20,7 @@ const PipelineWizard = () => {
         repoId: '', repoName: '', branch: '', yamlPath: '', name: '' 
     });
 
-    // --- SESSION TIMEOUT LOGIC RESTORED ---
+    // --- SESSION TIMEOUT LOGIC ---
     useEffect(() => {
         const timeoutLimit = 10 * 60 * 1000;
         const timer = setTimeout(() => {
@@ -41,7 +39,7 @@ const PipelineWizard = () => {
         primaryBtn: { padding: "10px 20px", background: "#0078d4", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "600" },
         repoListWrapper: { border: "1px solid #eaeaea", borderRadius: "4px", marginTop: "10px", maxHeight: "350px", overflowY: "auto", width: "100%", display: "flex", flexDirection: "column" },
         repoItem: { display: "flex", alignItems: "center", width: "100%", padding: "14px 18px", textAlign: "left", cursor: "pointer", border: "none", background: "#fff", borderBottom: "1px solid #f3f2f1", fontSize: "14px", boxSizing: "border-box" },
-        backBtn: { marginTop: "20px", background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0 },
+        backBtn: { background: "none", border: "none", color: "#0078d4", cursor: "pointer", fontSize: "14px", padding: 0, marginLeft: '15px' },
         tabContainer: { display: "flex", marginBottom: "20px", borderBottom: "1px solid #ddd" },
         tab: (active) => ({
             padding: "10px 20px",
@@ -59,16 +57,28 @@ const PipelineWizard = () => {
         else { setNameError(""); }
     };
 
+    // --- FETCH REPOS (With Array Check) ---
     useEffect(() => {
         const fetchRepos = async () => {
             setRepos([]);
+            setStatus(""); 
             try {
                 const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
                 const endpoint = sourceType === "azure" ? "/api/repos" : "/api/github/repos";
                 const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
                 const data = await res.json();
-                setRepos(data || []);
-            } catch (err) { console.error(err); }
+
+                if (res.ok && Array.isArray(data)) {
+                    setRepos(data);
+                } else {
+                    setRepos([]);
+                    setStatus(data.error || "Failed to load repositories.");
+                }
+            } catch (err) { 
+                console.error(err);
+                setRepos([]);
+                setStatus("Connection error.");
+            }
         };
         if (accounts.length > 0) fetchRepos();
     }, [instance, accounts, sourceType]);
@@ -84,9 +94,14 @@ const PipelineWizard = () => {
             
             const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
             const data = await res.json();
-            setBranches(data || []);
-            setStep(2);
-            setStatus("");
+            
+            if (Array.isArray(data)) {
+                setBranches(data);
+                setStep(2);
+                setStatus("");
+            } else {
+                setStatus("Invalid branch data received.");
+            }
         } catch (err) { setStatus("Error loading branches."); }
     };
 
@@ -100,7 +115,7 @@ const PipelineWizard = () => {
                 headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` }
             });
             const data = await res.json();
-            setYamlFiles(data || []);
+            setYamlFiles(Array.isArray(data) ? data : []);
         } catch (err) { console.error(err); }
     };
 
@@ -130,15 +145,16 @@ const PipelineWizard = () => {
                         <div style={styles.tab(sourceType === "github")} onClick={() => setSourceType("github")}>GitHub</div>
                     </div>
                     <input type="text" placeholder={`Search ${sourceType} repositories...`} style={styles.input} onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} />
+                    
                     <div style={styles.repoListWrapper}>
-                        {repos.filter(r => r.name.toLowerCase().includes(searchTerm)).map(r => (
+                        {Array.isArray(repos) ? repos.filter(r => r.name.toLowerCase().includes(searchTerm)).map(r => (
                             <button key={r.id} onClick={() => handleRepoSelect(r)} style={styles.repoItem}>
                                 <div style={{ width: "24px", color: sourceType === "azure" ? "#0078d4" : "#24292e", fontWeight: "bold" }}>
                                     {sourceType === "azure" ? "A" : "G"}
                                 </div>
                                 <span style={{ flexGrow: 1 }}>{r.name}</span>
                             </button>
-                        ))}
+                        )) : <p style={{padding: '10px'}}>No repositories found.</p>}
                     </div>
                 </div>
             )}
@@ -168,7 +184,7 @@ const PipelineWizard = () => {
                     )}
 
                     <button onClick={() => setStep(3)} style={styles.primaryBtn} disabled={!formData.yamlPath}>Next</button>
-                    <button onClick={() => setStep(1)} style={styles.backBtn} style={{marginLeft: '15px'}}>Back</button>
+                    <button onClick={() => setStep(1)} style={styles.backBtn}>Back</button>
                 </div>
             )}
 
@@ -184,7 +200,7 @@ const PipelineWizard = () => {
                     <input style={styles.input} value={formData.name} placeholder="Pipeline Name" onChange={(e) => handleNameChange(e.target.value)} />
                     {nameError && <p style={styles.errorText}>{nameError}</p>}
                     <button style={styles.primaryBtn} disabled={!!nameError || !formData.name} onClick={handleCreatePipeline}>Create Pipeline</button>
-                    <button onClick={() => setStep(2)} style={styles.backBtn} style={{marginLeft: '15px'}}>← Back</button>
+                    <button onClick={() => setStep(2)} style={styles.backBtn}>← Back</button>
                 </div>
             )}
         </div>

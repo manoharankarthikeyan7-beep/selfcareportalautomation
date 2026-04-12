@@ -88,21 +88,30 @@ const PipelineWizard = () => {
         setStatus(`Loading ${sourceType} configuration...`);
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
+            
+            // Fix: Use encodeURIComponent for repo.id to handle GitHub "owner/repo" slashes
+            const encodedRepoId = encodeURIComponent(repo.id);
             const endpoint = sourceType === "azure" 
-                ? `/api/repos/${repo.id}/branches` 
-                : `/api/github/repos/${repo.id}/branches`;
+                ? `/api/repos/${encodedRepoId}/branches` 
+                : `/api/github/repos/${encodedRepoId}/branches`;
             
             const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
             const data = await res.json();
             
-            if (Array.isArray(data)) {
-                setBranches(data);
+            // Fix: Added support for wrapped response values if coming from Service Connection proxy
+            const branchList = Array.isArray(data) ? data : (data.value || []);
+
+            if (branchList.length > 0) {
+                setBranches(branchList);
                 setStep(2);
                 setStatus("");
             } else {
-                setStatus("Invalid branch data received.");
+                setStatus("No branch data found for this repository.");
             }
-        } catch (err) { setStatus("Error loading branches."); }
+        } catch (err) { 
+            console.error(err);
+            setStatus("Error loading branches."); 
+        }
     };
 
     const handleBranchChange = async (branchName) => {
@@ -110,7 +119,8 @@ const PipelineWizard = () => {
         if (!branchName) return;
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
-            const baseUrl = sourceType === "azure" ? `/api/repos/${formData.repoId}` : `/api/github/repos/${formData.repoId}`;
+            const encodedRepoId = encodeURIComponent(formData.repoId);
+            const baseUrl = sourceType === "azure" ? `/api/repos/${encodedRepoId}` : `/api/github/repos/${encodedRepoId}`;
             const res = await fetch(`${baseUrl}/yaml-files?branch=${branchName}`, {
                 headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` }
             });
@@ -184,7 +194,7 @@ const PipelineWizard = () => {
                     )}
 
                     <button onClick={() => setStep(3)} style={styles.primaryBtn} disabled={!formData.yamlPath}>Next</button>
-                    <button onClick={() => setStep(1)} style={styles.backBtn}>Back</button>
+                    <button onClick={() => { setStep(1); setStatus(""); }} style={styles.backBtn}>Back</button>
                 </div>
             )}
 

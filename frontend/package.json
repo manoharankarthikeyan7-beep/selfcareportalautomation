@@ -1,7 +1,7 @@
 {
   "name": "pipeline-generator-unified",
   "version": "1.0.0",
-  "description": "Unified Express Backend and React Frontend",
+  "description": "Unified Express backend and React frontend for Azure App Service",
   "main": "index.js",
   "dependencies": {
     "@azure/msal-browser": "^3.0.0",
@@ -20,7 +20,9 @@
   "scripts": {
     "start": "node index.js",
     "build": "react-scripts build",
-    "test": "react-scripts test"
+    "postinstall": "npm run build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
   },
   "engines": {
     "node": ">=18.0.0"

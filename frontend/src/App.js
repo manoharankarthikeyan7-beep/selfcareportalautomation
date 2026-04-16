@@ -20,7 +20,6 @@ const PipelineWizard = () => {
         repoId: '', repoName: '', branch: '', yamlPath: '', name: '' 
     });
 
-    // --- SESSION TIMEOUT LOGIC ---
     useEffect(() => {
         const timeoutLimit = 10 * 60 * 1000;
         const timer = setTimeout(() => {
@@ -57,7 +56,6 @@ const PipelineWizard = () => {
         else { setNameError(""); }
     };
 
-    // --- FETCH REPOS ---
     useEffect(() => {
         const fetchRepos = async () => {
             setRepos([]);
@@ -69,11 +67,10 @@ const PipelineWizard = () => {
                 
                 const contentType = res.headers.get("content-type");
                 if (!contentType || !contentType.includes("application/json")) {
-                    throw new Error("Server returned HTML. Check backend route and environment variables.");
+                    throw new Error("Server returned HTML. Check backend route.");
                 }
 
                 const data = await res.json();
-
                 if (res.ok && Array.isArray(data)) {
                     setRepos(data);
                 } else {
@@ -89,25 +86,20 @@ const PipelineWizard = () => {
         if (accounts.length > 0) fetchRepos();
     }, [instance, accounts, sourceType]);
 
-    // --- FETCH BRANCHES (Fixed Encoding) ---
     const handleRepoSelect = async (repo) => {
         setFormData({ ...formData, repoId: repo.id, repoName: repo.name });
         setStatus(`Loading ${sourceType} configuration...`);
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
-            
-            // FIX: Double encode the repo ID to prevent intermediate routers from turning %2F back into a slash
             const encodedRepoId = encodeURIComponent(encodeURIComponent(repo.id));
-            
             const endpoint = sourceType === "azure" 
                 ? `/api/repos/${encodedRepoId}/branches` 
                 : `/api/github/repos/${encodedRepoId}/branches`;
             
             const res = await fetch(endpoint, { headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` } });
-            
             const contentType = res.headers.get("content-type");
             if (!contentType || !contentType.includes("application/json")) {
-                throw new Error("Branch API returned HTML. Possible 404 on backend.");
+                throw new Error("Branch API returned HTML.");
             }
 
             const data = await res.json();
@@ -118,7 +110,7 @@ const PipelineWizard = () => {
                 setStep(2);
                 setStatus("");
             } else {
-                setStatus("No branch data found for this repository.");
+                setStatus("No branch data found.");
             }
         } catch (err) { 
             console.error(err);
@@ -126,16 +118,12 @@ const PipelineWizard = () => {
         }
     };
 
-    // --- FETCH YAML FILES (Fixed Encoding) ---
     const handleBranchChange = async (branchName) => {
         setFormData({ ...formData, branch: branchName, yamlPath: '' });
         if (!branchName) return;
         try {
             const tokenResponse = await instance.acquireTokenSilent({ ...loginRequest, account: accounts[0] });
-            
-            // FIX: Double encode here as well
             const encodedRepoId = encodeURIComponent(encodeURIComponent(formData.repoId));
-            
             const baseUrl = sourceType === "azure" ? `/api/repos/${encodedRepoId}` : `/api/github/repos/${encodedRepoId}`;
             const res = await fetch(`${baseUrl}/yaml-files?branch=${branchName}`, {
                 headers: { "Authorization": `Bearer ${tokenResponse.accessToken}` }
@@ -146,7 +134,6 @@ const PipelineWizard = () => {
                 const data = await res.json();
                 setYamlFiles(Array.isArray(data) ? data : []);
             } else {
-                console.error("YAML API returned non-JSON response.");
                 setYamlFiles([]);
             }
         } catch (err) { console.error(err); }
@@ -159,17 +146,21 @@ const PipelineWizard = () => {
             const res = await fetch("/api/pipelines/create", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${tokenResponse.accessToken}` },
-                body: JSON.stringify({ ...formData, pipelineName: formData.name, sourceType, runPipeline: false })
+                body: JSON.stringify({ ...formData, pipelineName: formData.name, sourceType })
             });
-            if (res.ok) { setStatus("✅ Saved Successfully!"); } 
-            else { setStatus("❌ Failed to create pipeline."); }
+
+            const result = await res.json();
+            if (res.ok) { 
+                setStatus("✅ Saved Successfully!"); 
+            } else { 
+                setStatus(`❌ ${result.details || "Failed to create pipeline."}`); 
+            }
         } catch (err) { setStatus("❌ Connection error."); }
     };
 
     return (
         <div style={styles.card}>
             {status && <p style={{ color: "#0078d4", textAlign: "center" }}><b>{status}</b></p>}
-
             {step === 1 && (
                 <div style={{ width: "100%" }}>
                     <h2 style={{ fontSize: "18px", marginBottom: "15px" }}>1. Select Source & Repository</h2>
@@ -178,7 +169,6 @@ const PipelineWizard = () => {
                         <div style={styles.tab(sourceType === "github")} onClick={() => setSourceType("github")}>GitHub</div>
                     </div>
                     <input type="text" placeholder={`Search ${sourceType} repositories...`} style={styles.input} onChange={(e) => setSearchTerm(e.target.value.toLowerCase())} />
-                    
                     <div style={styles.repoListWrapper}>
                         {Array.isArray(repos) ? repos.filter(r => r.name.toLowerCase().includes(searchTerm)).map(r => (
                             <button key={r.id} onClick={() => handleRepoSelect(r)} style={styles.repoItem}>
@@ -191,7 +181,6 @@ const PipelineWizard = () => {
                     </div>
                 </div>
             )}
-
             {step === 2 && (
                 <div>
                     <h2>2. Configure Path ({sourceType === "azure" ? "Azure" : "GitHub"})</h2>
@@ -201,12 +190,10 @@ const PipelineWizard = () => {
                         <option value="">-- Select Branch --</option>
                         {branches.map(b => <option key={b.name} value={b.name}>{b.name.replace('refs/heads/', '')}</option>)}
                     </select>
-
                     <label style={styles.label}>YAML Path</label>
                     <span style={styles.toggleLink} onClick={() => setIsManualPath(!isManualPath)}>
                         {isManualPath ? "← Use file picker" : "Paste path manually →"}
                     </span>
-
                     {isManualPath ? (
                         <input style={styles.input} placeholder="e.g. /azure-pipelines.yml" value={formData.yamlPath} onChange={(e) => setFormData({...formData, yamlPath: e.target.value})} />
                     ) : (
@@ -215,12 +202,10 @@ const PipelineWizard = () => {
                             {yamlFiles.map(f => <option key={f} value={f}>{f}</option>)}
                         </select>
                     )}
-
                     <button onClick={() => setStep(3)} style={styles.primaryBtn} disabled={!formData.yamlPath}>Next</button>
                     <button onClick={() => { setStep(1); setStatus(""); }} style={styles.backBtn}>Back</button>
                 </div>
             )}
-
             {step === 3 && (
                 <div>
                     <h2>3. Review & Name</h2>

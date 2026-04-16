@@ -89,6 +89,29 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     } catch (e) { res.status(500).send("Error fetching branches"); }
 });
 
+// app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) => {
+//     const ghToken = getGitHubHeader();
+//     const repoPath = decodeURIComponent(req.params.repoId); 
+//     if (ghToken && repoPath.includes('/')) {
+//         try {
+//             const response = await axios.get(`https://api.github.com/repos/${repoPath}/branches`, {
+//                 headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' }
+//             });
+//             return res.json(response.data.map(b => ({ name: b.name })));
+//         } catch (e) { console.error("Direct GH Branch Error"); }
+//     }
+//     const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
+//     try {
+//         const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/serviceendpoint/proxy/execute?endpointId=${scId}&api-version=7.1-preview.1`;
+//         const response = await axios.post(url, 
+//             { dataSourceDetails: { dataSourceName: "Branches", parameters: { repository: repoPath } } },
+//             { headers: { 'Authorization': getAdoHeader() } }
+//         );
+//         res.json(response.data.value || []);
+//     } catch (e) { res.status(500).send("Error fetching GitHub branches"); }
+// });
+
+// --- UPDATED BRANCH ROUTE WITH NORMALIZATION ---
 app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) => {
     const ghToken = getGitHubHeader();
     const repoPath = decodeURIComponent(req.params.repoId); 
@@ -99,18 +122,26 @@ app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) =>
                 headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' }
             });
             return res.json(response.data.map(b => ({ name: b.name })));
-        } catch (e) { console.error("Direct GH Branch Error"); }
+        } catch (e) { console.error("Direct GH Branch Error: ", e.message); }
     }
 
     const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
     try {
         const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/serviceendpoint/proxy/execute?endpointId=${scId}&api-version=7.1-preview.1`;
         const response = await axios.post(url, 
-            { dataSourceDetails: { dataSourceName: "Branches", parameters: { repository: repoPath } } },
+            { dataSourceDetails: { dataSourceName: "Branches", parameters: { "repository": repoPath } } },
             { headers: { 'Authorization': getAdoHeader() } }
         );
-        res.json(response.data.value || []);
-    } catch (e) { res.status(500).send("Error fetching GitHub branches"); }
+        const rawData = response.data.value || [];
+        const formattedBranches = rawData.map(b => {
+            if (typeof b === 'string') return { name: b };
+            return { name: b.name || b.displayValue || JSON.stringify(b) };
+        });
+        res.json(formattedBranches);
+    } catch (e) { 
+        console.error("Proxy Error Details:", e.response?.data || e.message);
+        res.status(500).json({ error: "Error fetching GitHub branches via Proxy" }); 
+    }
 });
 
 app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
@@ -123,6 +154,24 @@ app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     } catch (e) { res.status(500).json([]); }
 });
 
+// app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) => {
+//     const repoId = decodeURIComponent(req.params.repoId);
+//     const { branch } = req.query;
+//     const ghToken = getGitHubHeader();
+//     if (ghToken && repoId.includes('/')) {
+//         try {
+//             const url = `https://api.github.com/repos/${repoId}/git/trees/${branch}?recursive=1`;
+//             const response = await axios.get(url, { headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' } });
+//             const files = response.data.tree
+//                 .filter(f => f.type === "blob" && (f.path.endsWith('.yml') || f.path.endsWith('.yaml')))
+//                 .map(f => "/" + f.path);
+//             return res.json(files);
+//         } catch (e) { console.error("GitHub Tree Error"); }
+//     }
+//     res.json([]);
+// });
+
+// --- UPDATED YAML ROUTE WITH PROXY FALLBACK ---
 app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     const repoId = decodeURIComponent(req.params.repoId);
     const { branch } = req.query;
@@ -138,7 +187,18 @@ app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) 
             return res.json(files);
         } catch (e) { console.error("GitHub Tree Error"); }
     }
-    res.json([]);
+
+    const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
+    try {
+        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/serviceendpoint/proxy/execute?endpointId=${scId}&api-version=7.1-preview.1`;
+        const response = await axios.post(url, {
+            dataSourceDetails: { dataSourceName: "FileContents", parameters: { "repository": repoId, "sha": branch } }
+        }, { headers: { 'Authorization': getAdoHeader() } });
+        const files = (response.data.value || [])
+            .filter(f => f.path && (f.path.endsWith('.yml') || f.path.endsWith('.yaml')))
+            .map(f => f.path.startsWith('/') ? f.path : "/" + f.path);
+        return res.json(files);
+    } catch (e) { console.error("Proxy YAML Error:", e.message); res.json([]); }
 });
 
 app.post('/api/pipelines/create', validateToken, async (req, res) => {

@@ -10,7 +10,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Helpers for Headers
 const getAdoHeader = () => {
     const pat = process.env.DEVOPS_PAT;
     return pat ? `Basic ${Buffer.from(`:${pat}`).toString('base64')}` : null;
@@ -47,8 +46,9 @@ const validateToken = (req, res, next) => {
   });
 };
 
-// --- API ROUTES (Defined BEFORE Static Files) ---
+// --- API ROUTES ---
 
+// 1. Fetch Repositories
 app.get('/api/repos', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -60,25 +60,63 @@ app.get('/api/repos', validateToken, async (req, res) => {
 });
 
 app.get('/api/github/repos', validateToken, async (req, res) => {
-    const ghToken = getGitHubHeader();
     try {
         const response = await axios.get('https://api.github.com/user/repos?per_page=100', {
-            headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' }
+            headers: { 'Authorization': getGitHubHeader(), 'Accept': 'application/vnd.github.v3+json' }
         });
-        res.json(response.data.map(r => ({ id: r.full_name, name: r.full_name })));
+        res.json(response.data.map(r => ({ id: r.full_name, name: r.full_name })).sort((a, b) => a.name.localeCompare(b.name)));
     } catch (e) { res.status(502).json({ error: "GitHub Unreachable" }); }
 });
 
-// Add other /api routes here...
-
-// --- SERVE REACT FRONTEND ---
-// Ensure your React 'build' folder is named 'build' or 'public'
-const buildPath = path.join(__dirname, 'build'); 
-app.use(express.static(buildPath));
-
-app.get('*', (req, res) => {
-    res.sendFile(path.join(buildPath, 'index.html'));
+// 2. Fetch Branches (The fix for your error)
+app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
+    try {
+        const response = await axios.get(
+            `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/refs?filter=heads/&api-version=7.1`,
+            { headers: { 'Authorization': getAdoHeader() } }
+        );
+        res.json(response.data.value);
+    } catch (e) { res.status(500).send("Error fetching ADO branches"); }
 });
 
+app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) => {
+    const repoPath = decodeURIComponent(req.params.repoId); 
+    try {
+        const response = await axios.get(`https://api.github.com/repos/${repoPath}/branches`, {
+            headers: { 'Authorization': getGitHubHeader(), 'Accept': 'application/vnd.github.v3+json' }
+        });
+        res.json(response.data.map(b => ({ name: b.name })));
+    } catch (e) { res.status(500).send("Error fetching GitHub branches"); }
+});
+
+// 3. Fetch YAML files
+app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
+    const { branch } = req.query;
+    const version = branch.replace('refs/heads/', '');
+    try {
+        const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
+        const response = await axios.get(url, { headers: { 'Authorization': getAdoHeader() } });
+        res.json(response.data.value.filter(i => i.path.endsWith('.yml') || i.path.endsWith('.yaml')).map(i => i.path));
+    } catch (e) { res.json([]); }
+});
+
+app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) => {
+    const repoId = decodeURIComponent(req.params.repoId);
+    const { branch } = req.query;
+    try {
+        const url = `https://api.github.com/repos/${repoId}/git/trees/${branch}?recursive=1`;
+        const response = await axios.get(url, { headers: { 'Authorization': getGitHubHeader() } });
+        const files = response.data.tree
+            .filter(f => f.type === "blob" && (f.path.endsWith('.yml') || f.path.endsWith('.yaml')))
+            .map(f => "/" + f.path);
+        res.json(files);
+    } catch (e) { res.json([]); }
+});
+
+// --- SERVE FRONTEND ---
+const buildPath = path.join(__dirname, 'build');
+app.use(express.static(buildPath));
+app.get('*', (req, res) => res.sendFile(path.join(buildPath, 'index.html')));
+
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Server online on ${PORT}`));

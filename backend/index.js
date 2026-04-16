@@ -19,7 +19,7 @@ const getGitHubHeader = () => {
     return process.env.GITHUB_TOKEN ? `token ${process.env.GITHUB_TOKEN}` : null;
 };
 
-// --- AUTHENTICATION (Azure AD / MSAL) ---
+// --- AUTHENTICATION ---
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`
 });
@@ -49,7 +49,6 @@ const validateToken = (req, res, next) => {
 
 // --- API ROUTES ---
 
-// Fetch Azure DevOps Repos
 app.get('/api/repos', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -60,7 +59,6 @@ app.get('/api/repos', validateToken, async (req, res) => {
     } catch (e) { res.status(502).json({ error: "ADO Unreachable" }); }
 });
 
-// Fetch GitHub Repos (Direct or Proxy)
 app.get('/api/github/repos', validateToken, async (req, res) => {
     const ghToken = getGitHubHeader();
     if (ghToken) {
@@ -69,7 +67,7 @@ app.get('/api/github/repos', validateToken, async (req, res) => {
                 headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' }
             });
             return res.json(response.data.map(r => ({ id: r.full_name, name: r.full_name })).sort((a, b) => a.name.localeCompare(b.name)));
-        } catch (e) { console.error("Direct GitHub Fetch failed, falling back to Service Connection..."); }
+        } catch (e) { console.error("Direct GH Error"); }
     }
 
     const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
@@ -81,7 +79,6 @@ app.get('/api/github/repos', validateToken, async (req, res) => {
     } catch (e) { res.status(502).json({ error: "GitHub Repos Unreachable" }); }
 });
 
-// Fetch Branches for Azure Repo
 app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     try {
         const response = await axios.get(
@@ -92,18 +89,17 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Error fetching branches" }); }
 });
 
-// Fetch Branches for GitHub Repo
 app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) => {
     const ghToken = getGitHubHeader();
     const repoPath = decodeURIComponent(req.params.repoId); 
-
+    
     if (ghToken && repoPath.includes('/')) {
         try {
             const response = await axios.get(`https://api.github.com/repos/${repoPath}/branches`, {
                 headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' }
             });
             return res.json(response.data.map(b => ({ name: b.name })));
-        } catch (e) { console.error("Direct GH Branch Error, trying proxy..."); }
+        } catch (e) { console.error("Direct GH Branch Error"); }
     }
 
     const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
@@ -118,7 +114,6 @@ app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) =>
     } catch (e) { res.status(502).json({ error: "GitHub branches unreachable" }); }
 });
 
-// Fetch YAML files for Azure Repo
 app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     const { branch } = req.query;
     const version = branch.replace('refs/heads/', '');
@@ -129,7 +124,6 @@ app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     } catch (e) { res.status(500).json([]); }
 });
 
-// Fetch YAML files for GitHub Repo
 app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     const repoId = decodeURIComponent(req.params.repoId);
     const { branch } = req.query;
@@ -145,19 +139,13 @@ app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) 
             return res.json(files);
         } catch (e) { console.error("GitHub Tree Error"); }
     }
-    // Fallback logic omitted for brevity, usually returns empty list if direct fetch fails
     res.json([]);
 });
 
-// --- CORE FIX: CREATE PIPELINE ---
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
     const { pipelineName, repoId, branch, yamlPath, sourceType } = req.body;
     const isGitHub = sourceType === "github";
-    
-    // Clean branch name (remove refs/heads/ if present)
     const cleanBranch = branch.replace('refs/heads/', '');
-    
-    // Ensure yamlPath starts with /
     const formattedPath = yamlPath.startsWith('/') ? yamlPath : `/${yamlPath}`;
 
     try {
@@ -168,32 +156,40 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
                 type: "yaml",
                 path: formattedPath,
                 repository: {
-                    id: repoId,                 // The 'FullName' or ID
-                    name: repoId,               // CRITICAL: Fixing the 'FullName' null error
+                    id: repoId,
+                    name: repoId,
+                    fullName: repoId, // Specifically targets the 'FullName' null error
                     type: isGitHub ? "github" : "azureReposGit",
                     defaultBranch: cleanBranch,
-                    connection: isGitHub ? { id: process.env.GITHUB_SERVICE_CONNECTION_ID } : undefined
+                    connection: isGitHub ? { id: process.env.GITHUB_SERVICE_CONNECTION_ID } : undefined,
+                    properties: isGitHub ? {
+                        apiUrl: `https://api.github.com/repos/${repoId}`,
+                        branchesUrl: `https://api.github.com/repos/${repoId}/branches`,
+                        cloneUrl: `https://github.com/${repoId}.git`,
+                        connectedServiceId: process.env.GITHUB_SERVICE_CONNECTION_ID,
+                        defaultBranch: cleanBranch,
+                        fullName: repoId,
+                        isPrivate: "true"
+                    } : undefined
                 }
             }
         };
 
-        console.log("Creating Pipeline with Payload:", JSON.stringify(payload, null, 2));
+        console.log("Submitting Payload to ADO:", JSON.stringify(payload, null, 2));
 
         const createRes = await axios.post(
             `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`,
             payload,
             { headers: { 'Authorization': getAdoHeader(), 'Content-Type': 'application/json' } }
         );
-        
         res.json(createRes.data);
-    } catch (e) {
+    } catch (e) { 
         const errorDetail = e.response?.data?.message || e.response?.data || e.message;
         console.error("ADO Pipeline Error:", errorDetail);
-        res.status(500).json({ error: "Azure DevOps rejected the request", details: errorDetail });
+        res.status(500).json({ error: "Operation failed", details: errorDetail }); 
     }
 });
 
-// --- SERVER SETUP ---
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

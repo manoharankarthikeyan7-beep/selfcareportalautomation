@@ -89,7 +89,6 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: "Error fetching branches" }); }
 });
 
-// --- UPDATED GITHUB BRANCH ROUTE ---
 app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) => {
     const ghToken = getGitHubHeader();
     const repoPath = decodeURIComponent(req.params.repoId); 
@@ -135,7 +134,6 @@ app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     } catch (e) { res.status(500).json([]); }
 });
 
-// --- UPDATED GITHUB YAML ROUTE ---
 app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     const repoId = decodeURIComponent(req.params.repoId);
     const { branch } = req.query;
@@ -169,32 +167,40 @@ app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) 
 });
 
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
-    const { pipelineName, repoId, branch, yamlPath, variables, sourceType } = req.body;
+    const { pipelineName, repoId, branch, yamlPath, sourceType } = req.body;
     const isGitHub = sourceType === "github";
+    const formattedPath = yamlPath.startsWith('/') ? yamlPath : `/${yamlPath}`;
+
     try {
         const payload = {
             name: pipelineName,
+            folder: "\\",
             configuration: {
                 type: "yaml",
-                path: yamlPath,
+                path: formattedPath,
                 repository: {
                     id: repoId,
                     type: isGitHub ? "github" : "azureReposGit",
+                    name: repoId,
                     defaultBranch: branch,
                     connection: isGitHub ? { id: process.env.GITHUB_SERVICE_CONNECTION_ID } : undefined
                 }
             }
         };
+
         const createRes = await axios.post(
             `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`,
             payload,
             { headers: { 'Authorization': getAdoHeader(), 'Content-Type': 'application/json' } }
         );
         res.json(createRes.data);
-    } catch (e) { res.status(500).json(e.response?.data || "Operation failed"); }
+    } catch (e) { 
+        const errorDetail = e.response?.data?.message || e.response?.data || e.message;
+        console.error("Azure DevOps Pipeline Error:", errorDetail);
+        res.status(500).json({ error: "Operation failed", details: errorDetail }); 
+    }
 });
 
-// Serving the React App
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

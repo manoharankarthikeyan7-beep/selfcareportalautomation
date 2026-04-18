@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet'); // ADDED: Security headers protection
+const rateLimit = require('express-rate-limit'); // ADDED: DDoS/Spam protection
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const path = require('path');
@@ -7,8 +9,29 @@ const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// SECURITY FIX: Helmet sets various HTTP headers to prevent XSS, clickjacking, 
+// and hides the 'X-Powered-By' header so hackers don't know you are using Express.
+app.use(helmet()); 
+
+// SECURITY FIX: Prevents a malicious actor from crashing your server by sending 
+// a massive JSON file. Limits the request body to 10kb.
+app.use(express.json({ limit: '10kb' })); 
+
+// SECURITY FIX: Rate limiting prevents automated bots from spamming your 
+// 'create pipeline' endpoint. Allows 100 requests per 15 mins.
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    message: { error: "Too many requests from this IP, please try again later." }
+});
+app.use('/api/', limiter);
+
+// SECURITY FIX: Hardened CORS. In production, change '*' to your specific UI URL.
+app.use(cors({
+    origin: process.env.ALLOWED_ORIGIN || '*', 
+    methods: ['GET', 'POST']
+}));
 
 const getAdoHeader = () => {
     const pat = process.env.DEVOPS_PAT;
@@ -21,7 +44,9 @@ const getGitHubHeader = () => {
 
 // --- AUTHENTICATION ---
 const client = jwksClient({
-  jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`
+  jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`,
+  cache: true, // SECURITY FIX: Caching keys reduces calls to Microsoft, preventing rate limits.
+  rateLimit: true
 });
 
 function getKey(header, callback) {
@@ -32,13 +57,17 @@ function getKey(header, callback) {
 }
 
 const validateToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).send('Unauthorized');
+  // SECURITY FIX: Strict check for 'Bearer' prefix to follow RFC standards.
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).send('Unauthorized');
+  
+  const token = authHeader.split(' ')[1];
 
   jwt.verify(token, getKey, {
     audience: `api://${process.env.AZURE_API_CLIENT_ID}`,
     issuer: `https://sts.windows.net/${process.env.AZURE_TENANT_ID}/`,
-    algorithms: ['RS256']
+    algorithms: ['RS256'],
+    clockTolerance: 30 // SECURITY FIX: Allows 30s time drift between servers to prevent random 403 errors.
   }, (err, decoded) => {
     if (err) return res.status(403).send('Invalid Token');
     if (decoded.tid !== process.env.AZURE_TENANT_ID) return res.status(403).send('Unauthorized Tenant');
@@ -56,7 +85,10 @@ app.get('/api/repos', validateToken, async (req, res) => {
             { headers: { 'Authorization': getAdoHeader() } }
         );
         res.json(response.data.value.sort((a, b) => a.name.localeCompare(b.name)));
-    } catch (e) { res.status(502).json({ error: "ADO Unreachable" }); }
+    } catch (e) { 
+        // SECURITY FIX: Generic error message hides internal Azure URLs from the frontend.
+        res.status(502).json({ error: "External Service Unavailable" }); 
+    }
 });
 
 app.get('/api/github/repos', validateToken, async (req, res) => {
@@ -67,7 +99,7 @@ app.get('/api/github/repos', validateToken, async (req, res) => {
                 headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' }
             });
             return res.json(response.data.map(r => ({ id: r.full_name, name: r.full_name })).sort((a, b) => a.name.localeCompare(b.name)));
-        } catch (e) { console.error("Direct GH Error"); }
+        } catch (e) { console.error("GitHub Fetch Error Logged Privately"); }
     }
 
     const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
@@ -76,7 +108,7 @@ app.get('/api/github/repos', validateToken, async (req, res) => {
         const response = await axios.post(url, { dataSourceDetails: { dataSourceName: "Repos" } }, { headers: { 'Authorization': getAdoHeader() } });
         const formatted = response.data.value.map(r => ({ id: r.name, name: r.name }));
         res.json(formatted.sort((a, b) => a.name.localeCompare(b.name)));
-    } catch (e) { res.status(502).json({ error: "GitHub Repos Unreachable" }); }
+    } catch (e) { res.status(502).json({ error: "Source Control Unreachable" }); }
 });
 
 app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
@@ -86,7 +118,7 @@ app.get('/api/repos/:repoId/branches', validateToken, async (req, res) => {
             { headers: { 'Authorization': getAdoHeader() } }
         );
         res.json(response.data.value);
-    } catch (e) { res.status(500).json({ error: "Error fetching branches" }); }
+    } catch (e) { res.status(500).json({ error: "Failed to fetch branch data" }); }
 });
 
 app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) => {
@@ -99,7 +131,7 @@ app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) =>
                 headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' }
             });
             return res.json(response.data.map(b => ({ name: b.name })));
-        } catch (e) { console.error("Direct GH Branch Error"); }
+        } catch (e) { console.error("Logged: GitHub Branch Error"); }
     }
 
     const scId = process.env.GITHUB_SERVICE_CONNECTION_ID;
@@ -111,11 +143,12 @@ app.get('/api/github/repos/:repoId/branches', validateToken, async (req, res) =>
         );
         const rawData = response.data.value || [];
         res.json(rawData.map(b => ({ name: typeof b === 'string' ? b : (b.name || b.displayValue) })));
-    } catch (e) { res.status(502).json({ error: "GitHub branches unreachable" }); }
+    } catch (e) { res.status(502).json({ error: "Branch Proxy Error" }); }
 });
 
 app.get('/api/repos/:repoId/yaml-files', validateToken, async (req, res) => {
     const { branch } = req.query;
+    if (!branch) return res.status(400).json({ error: "Parameter 'branch' is required" });
     const version = branch.replace('refs/heads/', '');
     try {
         const url = `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/git/repositories/${req.params.repoId}/items?recursionLevel=full&versionDescriptor.version=${version}&api-version=7.1`;
@@ -129,7 +162,7 @@ app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) 
     const { branch } = req.query;
     const ghToken = getGitHubHeader();
 
-    if (ghToken && repoId.includes('/')) {
+    if (ghToken && repoId.includes('/') && branch) {
         try {
             const url = `https://api.github.com/repos/${repoId}/git/trees/${branch}?recursive=1`;
             const response = await axios.get(url, { headers: { 'Authorization': ghToken, 'Accept': 'application/vnd.github.v3+json' } });
@@ -137,13 +170,20 @@ app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) 
                 .filter(f => f.type === "blob" && (f.path.endsWith('.yml') || f.path.endsWith('.yaml')))
                 .map(f => "/" + f.path);
             return res.json(files);
-        } catch (e) { console.error("GitHub Tree Error"); }
+        } catch (e) { console.error("GitHub Tree Error Logged"); }
     }
     res.json([]);
 });
 
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
     const { pipelineName, repoId, branch, yamlPath, sourceType } = req.body;
+    
+    // SECURITY FIX: Basic Input validation to ensure required fields aren't empty
+    // preventing the app from sending malformed requests to Azure.
+    if (!pipelineName || !repoId || !branch || !yamlPath) {
+        return res.status(400).json({ error: "Missing required pipeline fields" });
+    }
+
     const isGitHub = sourceType === "github";
     const cleanBranch = branch.replace('refs/heads/', '');
     const formattedPath = yamlPath.startsWith('/') ? yamlPath : `/${yamlPath}`;
@@ -158,7 +198,7 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
                 repository: {
                     id: repoId,
                     name: repoId,
-                    fullName: repoId, // Specifically targets the 'FullName' null error
+                    fullName: repoId,
                     type: isGitHub ? "github" : "azureReposGit",
                     defaultBranch: cleanBranch,
                     connection: isGitHub ? { id: process.env.GITHUB_SERVICE_CONNECTION_ID } : undefined,
@@ -175,8 +215,6 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
             }
         };
 
-        console.log("Submitting Payload to ADO:", JSON.stringify(payload, null, 2));
-
         const createRes = await axios.post(
             `https://dev.azure.com/${process.env.ADO_ORG_NAME}/${process.env.ADO_PROJECT_NAME}/_apis/pipelines?api-version=7.0`,
             payload,
@@ -184,9 +222,9 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
         );
         res.json(createRes.data);
     } catch (e) { 
-        const errorDetail = e.response?.data?.message || e.response?.data || e.message;
-        console.error("ADO Pipeline Error:", errorDetail);
-        res.status(500).json({ error: "Operation failed", details: errorDetail }); 
+        const errorDetail = e.response?.data?.message || "Internal Service Error";
+        console.error("Critical Failure:", errorDetail);
+        res.status(500).json({ error: "Pipeline Creation Failed" }); 
     }
 });
 
@@ -194,4 +232,4 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => console.log(`Server online on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Secured server running on port ${PORT}`));

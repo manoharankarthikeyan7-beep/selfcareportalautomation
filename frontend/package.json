@@ -10,6 +10,17 @@
     "@azure/msal-react": "^2.1.0",
     "axios": "^1.7.2"
   },
+  "overrides": {
+    "underscore": "^1.13.8",
+    "serialize-javascript": "^7.0.5",
+    "nth-check": "^2.0.1",
+    "eslint": "^9.26.0",
+    "@tootallnate/once": "^3.0.1",
+    "webpack-dev-server": "^5.2.1",
+    "react-scripts": {
+      "webpack-dev-server": "^5.2.1"
+    }
+  },
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",

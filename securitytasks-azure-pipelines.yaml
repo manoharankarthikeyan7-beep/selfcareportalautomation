@@ -1,0 +1,109 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: AppSecrets 
+  - name: webAppName
+    value: 'PipelineAPI' 
+  - name: azureServiceConnection
+    value: 'Azure subscription 1 (e26f51cc-2002-4eef-9131-5841b18763a7)' 
+  - name: resourceGroupName
+    value: 'pipelineautomationapi'
+  # NEW: Security IDs (Best practice is to keep these in Variable Groups)
+  - name: sonarCloudOrg
+    value: 'your-sonarcloud-org-id'
+  - name: sonarProjectKey
+    value: 'your-project-key'
+
+stages:
+- stage: Security_and_Build
+  displayName: 'Scan and Build'
+  jobs:
+  - job: Secure_Build
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '18.x'
+
+    # --- SECTION 1: SONARCLOUD ANALYSIS ---
+    # WHY: Prepares the environment to analyze code quality and potential "code smells."
+    - task: SonarCloudPrepare@1
+      inputs:
+        SonarCloud: 'SonarCloudConnection'
+        organization: '$(sonarCloudOrg)'
+        scannerMode: 'CLI'
+        configMode: 'manual'
+        projectKey: '$(sonarProjectKey)'
+        projectName: 'PipelineGenerator'
+
+    - script: |
+        cd backend
+        npm install
+      displayName: 'Install Backend'
+
+    - script: |
+        cd frontend
+        npm install
+        npm run build
+      displayName: 'Build Frontend'
+
+    # --- SECTION 2: SNYK VULNERABILITY SCAN ---
+    # WHY: Scans your package.json files for known security holes in your dependencies.
+    - task: SnykSecurityScan@1
+      inputs:
+        serviceConnectionEndpoint: 'SnykConnection'
+        testType: 'app'
+        monitorOnBuild: true
+        failOnIssues: true # CRITICAL: Stops the deployment if a critical bug is found.
+        organization: 'your-snyk-org-id'
+
+    # --- SECTION 3: SONARCLOUD EXECUTION ---
+    # WHY: Actually performs the scan after the build is ready.
+    - task: SonarCloudAnalyze@1
+      displayName: 'Run SonarCloud Analysis'
+
+    - task: SonarCloudPublish@1
+      inputs:
+        pollingTimeoutSec: '300'
+      displayName: 'Publish SonarCloud Results'
+
+    # --- SECTION 4: MERGE & ARCHIVE ---
+    - script: |
+        mkdir -p backend/public
+        cp -r frontend/build/* backend/public/
+      displayName: 'Merge Frontend to Backend'
+
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: 'backend'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+
+    - publish: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
+      artifact: drop
+
+- stage: Deploy
+  displayName: 'Deploy to Azure'
+  dependsOn: Security_and_Build
+  condition: succeeded() # WHY: Deploy ONLY if Snyk and SonarCloud pass successfully.
+  jobs:
+  - job: DeployWeb
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: drop
+
+    - task: AzureWebApp@1
+      displayName: 'Azure Web App Deploy'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        appType: 'webAppLinux'
+        appName: $(webAppName)
+        resourceGroupName: $(resourceGroupName)
+        package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+        runtimeStack: 'NODE|18-lts'

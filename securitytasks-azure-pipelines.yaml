@@ -14,9 +14,9 @@ variables:
     value: 'pipelineautomationapi'
   # NEW: Security IDs (Best practice is to keep these in Variable Groups)
   - name: sonarCloudOrg
-    value: 'your-sonarcloud-org-id'
+    value: 'senthiln0281'
   - name: sonarProjectKey
-    value: 'your-project-key'
+    value: 'senthiln0281_Pipeline'
 
 stages:
 - stage: Security_and_Build
@@ -58,7 +58,7 @@ stages:
         testType: 'app'
         monitorOnBuild: true
         failOnIssues: true # CRITICAL: Stops the deployment if a critical bug is found.
-        organization: 'your-snyk-org-id'
+        organization: '262c0b5b-633f-4261-a4b6-762bc547c1e9'
 
     # --- SECTION 3: SONARCLOUD EXECUTION ---
     # WHY: Actually performs the scan after the build is ready.

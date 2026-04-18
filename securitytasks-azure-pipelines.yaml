@@ -12,8 +12,6 @@ variables:
     value: 'Azure subscription 1 (e26f51cc-2002-4eef-9131-5841b18763a7)' 
   - name: resourceGroupName
     value: 'pipelineautomationapi'
-  
-  # SonarCloud Identifiers
   - name: sonarCloudOrg
     value: 'senthiln0281'
   - name: sonarProjectKey
@@ -26,11 +24,10 @@ stages:
   - job: Secure_Build
     steps:
     - task: NodeTool@0
+      displayName: 'Install Node.js 20'
       inputs:
-        versionSpec: '18.x'
+        versionSpec: '20.x' # UPGRADED from 18.x to support security patches
 
-    # --- SECTION 1: SONARCLOUD PREPARATION ---
-    # This task MUST come before any build/install steps.
     - task: SonarCloudPrepare@3
       displayName: 'Prepare SonarCloud'
       inputs:
@@ -40,7 +37,7 @@ stages:
         configMode: 'manual'
         cliProjectKey: '$(sonarProjectKey)'
         cliProjectName: 'PipelineGenerator'
-        cliSources: '.' # Tells SonarCloud to scan everything from the root
+        cliSources: '.' 
 
     - script: |
         cd backend
@@ -53,20 +50,16 @@ stages:
         npm run build
       displayName: 'Build Frontend'
 
-    # --- SECTION 2: SNYK VULNERABILITY SCAN ---
-    # FIX: Added --all-projects to find package.json in subdirectories.
     - task: SnykSecurityScan@1
       displayName: 'Snyk Security Scan'
       inputs:
         serviceConnectionEndpoint: 'SnykConnection'
         testType: 'app'
         monitorOnBuild: true
-        failOnIssues: true
+        failOnIssues: true # Keep this TRUE to block hackers
         organization: '262c0b5b-633f-4261-a4b6-762bc547c1e9'
         additionalArguments: '--all-projects'
 
-    # --- SECTION 3: SONARCLOUD EXECUTION & PUSH ---
-    # These two tasks actually push the report to SonarCloud.
     - task: SonarCloudAnalyze@3
       displayName: 'Run SonarCloud Analysis'
 
@@ -75,7 +68,6 @@ stages:
       inputs:
         pollingTimeoutSec: '300'
 
-    # --- SECTION 4: ARCHIVE & PUBLISH ARTIFACTS ---
     - script: |
         mkdir -p backend/public
         cp -r frontend/build/* backend/public/
@@ -108,4 +100,4 @@ stages:
         appType: 'webAppLinux'
         appName: $(webAppName)
         package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
-        runtimeStack: 'NODE|18-lts'
+        runtimeStack: 'NODE|20-lts' # MATCHED with build version

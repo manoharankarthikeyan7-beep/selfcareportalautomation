@@ -13,6 +13,7 @@ variables:
   - name: resourceGroupName
     value: 'pipelineautomationapi'
   
+  # SonarCloud Identifiers
   - name: sonarCloudOrg
     value: 'senthiln0281'
   - name: sonarProjectKey
@@ -29,6 +30,7 @@ stages:
         versionSpec: '18.x'
 
     # --- SECTION 1: SONARCLOUD PREPARATION ---
+    # This task MUST come before any build/install steps.
     - task: SonarCloudPrepare@3
       displayName: 'Prepare SonarCloud'
       inputs:
@@ -36,10 +38,9 @@ stages:
         organization: '$(sonarCloudOrg)'
         scannerMode: 'CLI'
         configMode: 'manual'
-        # FIXED: Using 'cli' prefixes required for CLI scannerMode
         cliProjectKey: '$(sonarProjectKey)'
         cliProjectName: 'PipelineGenerator'
-        cliSources: '.' 
+        cliSources: '.' # Tells SonarCloud to scan everything from the root
 
     - script: |
         cd backend
@@ -53,6 +54,7 @@ stages:
       displayName: 'Build Frontend'
 
     # --- SECTION 2: SNYK VULNERABILITY SCAN ---
+    # FIX: Added --all-projects to find package.json in subdirectories.
     - task: SnykSecurityScan@1
       displayName: 'Snyk Security Scan'
       inputs:
@@ -61,24 +63,25 @@ stages:
         monitorOnBuild: true
         failOnIssues: true
         organization: '262c0b5b-633f-4261-a4b6-762bc547c1e9'
+        additionalArguments: '--all-projects'
 
-    # --- SECTION 3: SONARCLOUD EXECUTION ---
+    # --- SECTION 3: SONARCLOUD EXECUTION & PUSH ---
+    # These two tasks actually push the report to SonarCloud.
     - task: SonarCloudAnalyze@3
       displayName: 'Run SonarCloud Analysis'
 
     - task: SonarCloudPublish@3
-      displayName: 'Publish SonarCloud Results'
+      displayName: 'Publish Quality Gate Result'
       inputs:
         pollingTimeoutSec: '300'
 
-    # --- SECTION 4: MERGE & ARCHIVE ---
+    # --- SECTION 4: ARCHIVE & PUBLISH ARTIFACTS ---
     - script: |
         mkdir -p backend/public
         cp -r frontend/build/* backend/public/
       displayName: 'Merge Frontend to Backend'
 
     - task: ArchiveFiles@2
-      displayName: 'Create Deployment Package'
       inputs:
         rootFolderOrFile: 'backend'
         includeRootFolder: false
@@ -89,7 +92,7 @@ stages:
       artifact: drop
 
 - stage: Deploy
-  displayName: 'Deploy to Azure'
+  displayName: 'Deploy'
   dependsOn: Security_and_Build
   condition: succeeded() 
   jobs:
@@ -99,13 +102,10 @@ stages:
     steps:
     - download: current
       artifact: drop
-
     - task: AzureWebApp@1
-      displayName: 'Azure Web App Deploy'
       inputs:
         azureSubscription: $(azureServiceConnection)
         appType: 'webAppLinux'
         appName: $(webAppName)
-        resourceGroupName: $(resourceGroupName)
         package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
         runtimeStack: 'NODE|18-lts'

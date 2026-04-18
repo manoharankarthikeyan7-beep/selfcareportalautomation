@@ -12,7 +12,8 @@ variables:
     value: 'Azure subscription 1 (e26f51cc-2002-4eef-9131-5841b18763a7)' 
   - name: resourceGroupName
     value: 'pipelineautomationapi'
-  # NEW: Security IDs (Best practice is to keep these in Variable Groups)
+  
+  # SECURITY IDs: Values mapped from your SonarCloud dashboard
   - name: sonarCloudOrg
     value: 'senthiln0281'
   - name: sonarProjectKey
@@ -28,9 +29,11 @@ stages:
       inputs:
         versionSpec: '18.x'
 
-    # --- SECTION 1: SONARCLOUD ANALYSIS ---
-    # WHY: Prepares the environment to analyze code quality and potential "code smells."
-    - task: SonarCloudPrepare@1
+    # --- SECTION 1: SONARCLOUD PREPARATION ---
+    # UPDATED: Using version @3 to match the latest marketplace standard.
+    # This prepares the environment for code quality analysis.
+    - task: SonarCloudPrepare@3
+      displayName: 'Prepare SonarCloud'
       inputs:
         SonarCloud: 'SonarCloudConnection'
         organization: '$(sonarCloudOrg)'
@@ -51,32 +54,37 @@ stages:
       displayName: 'Build Frontend'
 
     # --- SECTION 2: SNYK VULNERABILITY SCAN ---
-    # WHY: Scans your package.json files for known security holes in your dependencies.
+    # This checks your npm dependencies for known security exploits.
+    # It is set to fail the build if high-severity issues are found.
     - task: SnykSecurityScan@1
+      displayName: 'Snyk Security Scan'
       inputs:
         serviceConnectionEndpoint: 'SnykConnection'
         testType: 'app'
         monitorOnBuild: true
-        failOnIssues: true # CRITICAL: Stops the deployment if a critical bug is found.
+        failOnIssues: true
         organization: '262c0b5b-633f-4261-a4b6-762bc547c1e9'
 
-    # --- SECTION 3: SONARCLOUD EXECUTION ---
-    # WHY: Actually performs the scan after the build is ready.
-    - task: SonarCloudAnalyze@1
+    # --- SECTION 3: SONARCLOUD ANALYSIS ---
+    # UPDATED: Using version @2 for the actual execution step.
+    # Runs the scan and publishes results back to your SonarCloud dashboard.
+    - task: SonarCloudAnalyze@2
       displayName: 'Run SonarCloud Analysis'
 
-    - task: SonarCloudPublish@1
+    - task: SonarCloudPublish@2
+      displayName: 'Publish SonarCloud Results'
       inputs:
         pollingTimeoutSec: '300'
-      displayName: 'Publish SonarCloud Results'
 
     # --- SECTION 4: MERGE & ARCHIVE ---
+    # Combines the React build into the Express 'public' folder for a unified deployment.
     - script: |
         mkdir -p backend/public
         cp -r frontend/build/* backend/public/
       displayName: 'Merge Frontend to Backend'
 
     - task: ArchiveFiles@2
+      displayName: 'Create Deployment Package'
       inputs:
         rootFolderOrFile: 'backend'
         includeRootFolder: false
@@ -89,7 +97,8 @@ stages:
 - stage: Deploy
   displayName: 'Deploy to Azure'
   dependsOn: Security_and_Build
-  condition: succeeded() # WHY: Deploy ONLY if Snyk and SonarCloud pass successfully.
+  # SECURITY CHECK: Only deploy if the security scans and build were successful.
+  condition: succeeded() 
   jobs:
   - job: DeployWeb
     pool:

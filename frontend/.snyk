@@ -1,0 +1,13 @@
+# Snyk (https://snyk.io) policy file
+version: v1.25.0
+ignore:
+  # Inflight: No fix exists. Build-time only.
+  'SNYK-JS-INFLIGHT-6095116':
+    - '*':
+        reason: 'No fix available from maintainers. This is a build-time dependency for Jest/Babel and is not included in the production bundle.'
+        expires: '2026-10-19T00:00:00.000Z'
+  # ESLint: Version 9 is incompatible with react-scripts 5.
+  'SNYK-JS-ESLINT-15102420':
+    - '*':
+        reason: 'Incompatible with react-scripts. Version 8.57.1 is the maximum supported version for this framework architecture.'
+        expires: '2026-10-19T00:00:00.000Z'

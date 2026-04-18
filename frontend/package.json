@@ -21,7 +21,13 @@
     "react-scripts": {
       "webpack-dev-server": "^5.2.1",
       "postcss": "^8.4.31",
-      "eslint": "8.57.1"
+      "eslint": "8.57.1",
+      "css-minimizer-webpack-plugin": {
+        "serialize-javascript": "6.0.2"
+      },
+      "terser-webpack-plugin": {
+        "serialize-javascript": "6.0.2"
+      }
     }
   },
   "scripts": {

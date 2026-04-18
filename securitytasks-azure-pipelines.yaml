@@ -13,6 +13,7 @@ variables:
   - name: resourceGroupName
     value: 'pipelineautomationapi'
   
+  # SECURITY IDs
   - name: sonarCloudOrg
     value: 'senthiln0281'
   - name: sonarProjectKey
@@ -29,8 +30,8 @@ stages:
         versionSpec: '18.x'
 
     # --- SECTION 1: SONARCLOUD PREPARATION ---
-    # Reverting to @1 for maximum compatibility with older agents
-    - task: SonarCloudPrepare@1
+    # Try @3 - This is the standard for 2026 environments
+    - task: SonarCloudPrepare@3
       displayName: 'Prepare SonarCloud'
       inputs:
         SonarCloud: 'SonarCloudConnection'
@@ -62,11 +63,11 @@ stages:
         organization: '262c0b5b-633f-4261-a4b6-762bc547c1e9'
 
     # --- SECTION 3: SONARCLOUD EXECUTION ---
-    # Reverting to @1 as per the error message's suggestion that @2 is missing
-    - task: SonarCloudAnalyze@1
+    # Try @3 - Matching the version of the Prepare task
+    - task: SonarCloudAnalyze@3
       displayName: 'Run SonarCloud Analysis'
 
-    - task: SonarCloudPublish@1
+    - task: SonarCloudPublish@3
       displayName: 'Publish SonarCloud Results'
       inputs:
         pollingTimeoutSec: '300'

@@ -1,0 +1,111 @@
+trigger:
+- main
+- security_scan_fix # DESCRIPTION: Added this branch to the CI trigger list.
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  - group: AppSecrets 
+  - name: webAppName
+    value: 'PipelineAPI' 
+  - name: azureServiceConnection
+    value: 'Azure subscription 1 (e26f51cc-2002-4eef-9131-5841b18763a7)' 
+  - name: resourceGroupName
+    value: 'pipelineautomationapi'
+  - name: sonarCloudOrg
+    value: 'senthiln0281'
+  - name: sonarProjectKey
+    value: 'senthiln0281_Pipeline'
+  # DESCRIPTION: Added a global Node memory limit to prevent SonarCloud scanner crashes.
+  - name: NODE_OPTIONS
+    value: '--max-old-space-size=4096'
+
+stages:
+- stage: Security_and_Build
+  displayName: 'Scan and Build'
+  jobs:
+  - job: Secure_Build
+    steps:
+    - task: NodeTool@0
+      displayName: 'Install Node.js 20'
+      inputs:
+        versionSpec: '20.x'
+
+    - task: SonarCloudPrepare@3
+      displayName: 'Prepare SonarCloud'
+      inputs:
+        SonarCloud: 'SonarCloudConnection'
+        organization: '$(sonarCloudOrg)'
+        scannerMode: 'CLI'
+        configMode: 'manual'
+        cliProjectKey: '$(sonarProjectKey)'
+        cliProjectName: 'PipelineGenerator'
+        # DESCRIPTION: Explicitly defining sources and exclusions prevents the scanner 
+        # from getting lost in heavy dependency folders or build artifacts.
+        extraProperties: |
+          sonar.sources=.
+          sonar.exclusions=**/node_modules/**, **/build/**, **/dist/**
+          sonar.javascript.node.maxspace=4096
+
+    - script: |
+        cd backend
+        npm install
+      displayName: 'Install Backend'
+
+    - script: |
+        cd frontend
+        npm install
+        npm run build
+      displayName: 'Build Frontend'
+
+    - task: SnykSecurityScan@1
+      displayName: 'Snyk Security Scan'
+      inputs:
+        serviceConnectionEndpoint: 'SnykConnection'
+        testType: 'app'
+        monitorOnBuild: true
+        failOnIssues: true 
+        organization: '262c0b5b-633f-4261-a4b6-762bc547c1e9'
+        additionalArguments: '--all-projects'
+
+    - task: SonarCloudAnalyze@3
+      displayName: 'Run SonarCloud Analysis'
+
+    - task: SonarCloudPublish@3
+      displayName: 'Publish Quality Gate Result'
+      inputs:
+        pollingTimeoutSec: '300'
+
+    - script: |
+        mkdir -p backend/public
+        cp -r frontend/build/* backend/public/
+      displayName: 'Merge Frontend to Backend'
+
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: 'backend'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+
+    - publish: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
+      artifact: drop
+
+- stage: Deploy
+  displayName: 'Deploy'
+  dependsOn: Security_and_Build
+  condition: succeeded() 
+  jobs:
+  - job: DeployWeb
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: drop
+    - task: AzureWebApp@1
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        appType: 'webAppLinux'
+        appName: $(webAppName)
+        package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+        runtimeStack: 'NODE|20-lts'

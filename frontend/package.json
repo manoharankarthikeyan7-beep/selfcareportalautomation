@@ -1,17 +1,41 @@
 {
   "name": "pipeline-generator-frontend",
   "version": "1.0.0",
+  "private": true,
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
-    "@azure/msal-browser": "^3.0.0",
-    "@azure/msal-react": "^2.0.0",
-    "axios": "^1.6.0"
+    "@azure/msal-browser": "^3.11.0",
+    "@azure/msal-react": "^2.1.0",
+    "axios": "^1.7.2"
+  },
+  "overrides": {
+    "underscore": "^1.13.8",
+    "serialize-javascript": "7.0.5",
+    "nth-check": "^2.0.1",
+    "eslint": "8.57.1",
+    "postcss": "^8.4.31",
+    "@tootallnate/once": "^3.0.1",
+    "webpack-dev-server": "^5.2.1",
+    "react-scripts": {
+      "webpack-dev-server": "^5.2.1",
+      "postcss": "^8.4.31",
+      "eslint": "8.57.1",
+      "serialize-javascript": "7.0.5",
+      "css-minimizer-webpack-plugin": {
+        "serialize-javascript": "7.0.5"
+      },
+      "terser-webpack-plugin": {
+        "serialize-javascript": "7.0.5"
+      }
+    }
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build"
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
   },
   "browserslist": {
     "production": [

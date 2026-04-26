@@ -1,6 +1,7 @@
 trigger:
-- main
-- security_scan_fix # DESCRIPTION: Added this branch to the CI trigger list.
+  - main
+  #- security_scan_fix 
+
 pool:
   vmImage: 'ubuntu-latest'
 
@@ -16,7 +17,6 @@ variables:
     value: 'senthiln0281'
   - name: sonarProjectKey
     value: 'senthiln0281_Pipeline'
-  # DESCRIPTION: Added a global Node memory limit to prevent SonarCloud scanner crashes.
   - name: NODE_OPTIONS
     value: '--max-old-space-size=4096'
 
@@ -40,8 +40,6 @@ stages:
         configMode: 'manual'
         cliProjectKey: '$(sonarProjectKey)'
         cliProjectName: 'PipelineGenerator'
-        # DESCRIPTION: Explicitly defining sources and exclusions prevents the scanner 
-        # from getting lost in heavy dependency folders or build artifacts.
         extraProperties: |
           sonar.sources=.
           sonar.exclusions=**/node_modules/**, **/build/**, **/dist/**
@@ -49,12 +47,12 @@ stages:
 
     - script: |
         cd backend
-        npm install
+        npm install --ignore-scripts
       displayName: 'Install Backend'
 
     - script: |
         cd frontend
-        npm install
+        npm install --ignore-scripts
         npm run build
       displayName: 'Build Frontend'
 

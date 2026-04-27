@@ -75,12 +75,14 @@ stages:
     - task: SonarCloudAnalyze@3
       displayName: 'Run SonarCloud Analysis'
 
-    - task: SonarCloudPublish@3
-      displayName: 'Publish Quality Gate Result'
-      inputs:
-        pollingTimeoutSec: '300'
+    # DESCRIPTION: Task disabled as requested. 
+    # Analysis results will still be available in the SonarCloud dashboard.
+    # - task: SonarCloudPublish@3
+    #   displayName: 'Publish Quality Gate Result'
+    #   inputs:
+    #     pollingTimeoutSec: '300'
 
-# --- NEW STAGE: CONTAINERIZE ---
+# --- STAGE: CONTAINERIZE ---
 - stage: Containerize
   displayName: 'Docker Build & Push'
   dependsOn: Security_and_Build
@@ -99,7 +101,7 @@ stages:
           $(Build.BuildId)
           latest
 
-# --- UPDATED DEPLOY STAGE (For K8s transition) ---
+# --- STAGE: DEPLOY ---
 - stage: Deploy
   displayName: 'Deploy to K8s'
   dependsOn: Containerize
@@ -109,6 +111,5 @@ stages:
     pool:
       vmImage: 'ubuntu-latest'
     steps:
-    # NOTE: This is where we will add the Kubectl commands once your cluster is ready.
     - script: echo "Ready to deploy image $(imageRepository):$(Build.BuildId) to Kubernetes"
       displayName: 'K8s Deployment Placeholder'

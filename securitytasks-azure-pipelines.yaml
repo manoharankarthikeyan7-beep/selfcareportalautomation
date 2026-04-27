@@ -20,7 +20,7 @@ variables:
     value: '--max-old-space-size=4096'
   # --- NEW DOCKER VARIABLES ---
   - name: containerRegistryConnection
-    value: 'YourACRServiceConnectionName' # Replace with your Azure DevOps Service Connection name
+    value: 'MyACRConnection' # Replace with your Azure DevOps Service Connection name
   - name: imageRepository
     value: 'pipeline-generator'
   - name: dockerfilePath

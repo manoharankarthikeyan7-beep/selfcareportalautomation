@@ -1,6 +1,5 @@
 trigger:
   - main
-  #- security_scan_fix 
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -19,6 +18,13 @@ variables:
     value: 'senthiln0281_Pipeline'
   - name: NODE_OPTIONS
     value: '--max-old-space-size=4096'
+  # --- NEW DOCKER VARIABLES ---
+  - name: containerRegistryConnection
+    value: 'YourACRServiceConnectionName' # Replace with your Azure DevOps Service Connection name
+  - name: imageRepository
+    value: 'pipeline-generator'
+  - name: dockerfilePath
+    value: '**/Dockerfile'
 
 stages:
 - stage: Security_and_Build
@@ -74,36 +80,35 @@ stages:
       inputs:
         pollingTimeoutSec: '300'
 
-    - script: |
-        mkdir -p backend/public
-        cp -r frontend/build/* backend/public/
-      displayName: 'Merge Frontend to Backend'
-
-    - task: ArchiveFiles@2
-      inputs:
-        rootFolderOrFile: 'backend'
-        includeRootFolder: false
-        archiveType: 'zip'
-        archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
-
-    - publish: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
-      artifact: drop
-
-- stage: Deploy
-  displayName: 'Deploy'
+# --- NEW STAGE: CONTAINERIZE ---
+- stage: Containerize
+  displayName: 'Docker Build & Push'
   dependsOn: Security_and_Build
+  condition: succeeded()
+  jobs:
+  - job: Docker_Push
+    steps:
+    - task: Docker@2
+      displayName: 'Build and Push to ACR'
+      inputs:
+        containerRegistry: '$(containerRegistryConnection)'
+        repository: '$(imageRepository)'
+        command: 'buildAndPush'
+        Dockerfile: '$(dockerfilePath)'
+        tags: |
+          $(Build.BuildId)
+          latest
+
+# --- UPDATED DEPLOY STAGE (For K8s transition) ---
+- stage: Deploy
+  displayName: 'Deploy to K8s'
+  dependsOn: Containerize
   condition: succeeded() 
   jobs:
-  - job: DeployWeb
+  - job: DeployK8s
     pool:
       vmImage: 'ubuntu-latest'
     steps:
-    - download: current
-      artifact: drop
-    - task: AzureWebApp@1
-      inputs:
-        azureSubscription: $(azureServiceConnection)
-        appType: 'webAppLinux'
-        appName: $(webAppName)
-        package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
-        runtimeStack: 'NODE|20-lts'
+    # NOTE: This is where we will add the Kubectl commands once your cluster is ready.
+    - script: echo "Ready to deploy image $(imageRepository):$(Build.BuildId) to Kubernetes"
+      displayName: 'K8s Deployment Placeholder'

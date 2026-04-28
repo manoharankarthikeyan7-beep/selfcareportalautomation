@@ -1,19 +1,20 @@
 const express = require('express');
 const cors = require('cors');
-const helmet = require('helmet'); // ADDED: Security headers protection
-const rateLimit = require('express-rate-limit'); // ADDED: DDoS/Spam protection
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const path = require('path');
 const axios = require('axios');
+// ADDED: Native Node modules for HTTPS
+const https = require('https');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
 
 /**
  * SECURITY FIX: Updated Content Security Policy (CSP)
- * We must explicitly allow the browser to connect to Microsoft's login servers.
- * Without this, Helmet's default policy blocks the MSAL authentication handshake.
  */
 app.use(
   helmet({
@@ -34,12 +35,8 @@ app.use(
   })
 );
 
-// SECURITY FIX: Prevents a malicious actor from crashing your server by sending 
-// a massive JSON file. Limits the request body to 10kb.
 app.use(express.json({ limit: '10kb' })); 
 
-// SECURITY FIX: Rate limiting prevents automated bots from spamming your 
-// 'create pipeline' endpoint. Allows 100 requests per 15 mins.
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 100,
@@ -47,7 +44,6 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// SECURITY FIX: Hardened CORS. In production, change '*' to your specific UI URL.
 app.use(cors({
     origin: process.env.ALLOWED_ORIGIN || '*', 
     methods: ['GET', 'POST']
@@ -65,7 +61,7 @@ const getGitHubHeader = () => {
 // --- AUTHENTICATION ---
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/discovery/v2.0/keys`,
-  cache: true, // SECURITY FIX: Caching keys reduces calls to Microsoft, preventing rate limits.
+  cache: true,
   rateLimit: true
 });
 
@@ -77,7 +73,6 @@ function getKey(header, callback) {
 }
 
 const validateToken = (req, res, next) => {
-  // SECURITY FIX: Strict check for 'Bearer' prefix to follow RFC standards.
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) return res.status(401).send('Unauthorized');
   
@@ -87,7 +82,7 @@ const validateToken = (req, res, next) => {
     audience: `api://${process.env.AZURE_API_CLIENT_ID}`,
     issuer: `https://sts.windows.net/${process.env.AZURE_TENANT_ID}/`,
     algorithms: ['RS256'],
-    clockTolerance: 30 // SECURITY FIX: Allows 30s time drift between servers to prevent random 403 errors.
+    clockTolerance: 30 
   }, (err, decoded) => {
     if (err) return res.status(403).send('Invalid Token');
     if (decoded.tid !== process.env.AZURE_TENANT_ID) return res.status(403).send('Unauthorized Tenant');
@@ -106,7 +101,6 @@ app.get('/api/repos', validateToken, async (req, res) => {
         );
         res.json(response.data.value.sort((a, b) => a.name.localeCompare(b.name)));
     } catch (e) { 
-        // SECURITY FIX: Generic error message hides internal Azure URLs from the frontend.
         res.status(502).json({ error: "External Service Unavailable" }); 
     }
 });
@@ -198,8 +192,6 @@ app.get('/api/github/repos/:repoId/yaml-files', validateToken, async (req, res) 
 app.post('/api/pipelines/create', validateToken, async (req, res) => {
     const { pipelineName, repoId, branch, yamlPath, sourceType } = req.body;
     
-    // SECURITY FIX: Basic Input validation to ensure required fields aren't empty
-    // preventing the app from sending malformed requests to Azure.
     if (!pipelineName || !repoId || !branch || !yamlPath) {
         return res.status(400).json({ error: "Missing required pipeline fields" });
     }
@@ -251,5 +243,19 @@ app.post('/api/pipelines/create', validateToken, async (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
+// --- UPDATED SECURE LISTENER ---
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => console.log(`Secured server running on port ${PORT}`));
+
+try {
+    const options = {
+        key: fs.readFileSync(path.join(__dirname, 'key.pem')),
+        cert: fs.readFileSync(path.join(__dirname, 'cert.pem'))
+    };
+
+    https.createServer(options, app).listen(PORT, '0.0.0.0', () => {
+        console.log(`Secured server running on port ${PORT}`);
+    });
+} catch (err) {
+    console.error("ERROR: Could not find key.pem or cert.pem in the backend directory.");
+    process.exit(1);
+}
